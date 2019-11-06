@@ -1,3 +1,8 @@
+/*
+A simple binary to create a graphviz graph which relates clauses by the literals
+they contain.
+Can be run on a dimacs file by running `clause_graph -f <FILE>`.
+*/
 package main
 
 import (

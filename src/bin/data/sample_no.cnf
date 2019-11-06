@@ -1,0 +1,6 @@
+c  simple_v3_c2.cnf
+c
+p cnf 3 2
+1 1 0
+-1 -1 0
+1 -1 0
