@@ -9,7 +9,7 @@ use std::{
 #[derive(Debug)]
 pub struct ClauseDatabase {
   // the max number of variables in this set of clauses
-  max_vars: usize,
+  pub(crate) max_vars: usize,
 
   // initial set of read only clauses.
   // They should only be simplified to be equivalent to
@@ -55,7 +55,7 @@ impl ClauseDatabase {
   }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ClauseRef {
   // Learnt clauses are just atomically referenced pointers
   Learnt(Arc<Clause>),
@@ -65,7 +65,9 @@ pub enum ClauseRef {
 
 impl From<Vec<Clause>> for ClauseDatabase {
   fn from(v: Vec<Clause>) -> Self {
+    let max_vars = v.iter().map(|c| c.max_var()).max().unwrap_or(0);
     Self {
+      max_vars,
       initial_clauses: v,
       learnt_clauses: RwLock::new(vec![]),
     }

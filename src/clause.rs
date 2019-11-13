@@ -9,7 +9,7 @@ pub struct ClauseHeader {
 */
 
 /// A CNF clause, where each of the literals is some variable in the entire expression
-#[derive(Clone, Debug, PartialEq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Clause {
   pub(crate) literals: Vec<Literal>,
   //  marked_for_deletion: bool,
@@ -38,6 +38,7 @@ impl<'a> ClauseState<'a> {
 impl Clause {
   pub fn push(&mut self, lit: Literal) { self.literals.push(lit); }
   pub fn is_empty(&self) -> bool { self.literals.is_empty() }
+  pub fn max_var(&self) -> usize { self.literals.iter().map(|lit| lit.var()).max().unwrap_or(0) }
   pub fn is_sat(&self, assns: &Vec<Option<bool>>) -> bool {
     self
       .literals

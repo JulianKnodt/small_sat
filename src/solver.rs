@@ -2,6 +2,7 @@ use crate::{
   clause::Clause,
   database::{ClauseDatabase, ClauseRef},
   literal::Literal,
+  watch_list::WatchList,
 };
 use std::{collections::HashSet, io, sync::Arc};
 
@@ -27,6 +28,7 @@ pub struct Solver {
   clause_db: Arc<ClauseDatabase>,
   // last_learnt_clause: usize,
   // TODO do we need to track the last learnt clause?
+  watch_list: WatchList,
 
   // which level is this solver currently at
   level: usize,
@@ -135,9 +137,9 @@ impl Solver {
   /// and the error indicates which clause(by index) caused the error.
   #[must_use]
   fn bool_constraint_propogation(&mut self) -> Result<(), ClauseRef> {
-    let mut saw_constraint = true;
     unimplemented!();
     /*
+    let mut saw_constraint = true;
     while saw_constraint {
       saw_constraint = false;
       for i in 0..self.clauses.len() {
@@ -207,6 +209,7 @@ impl Solver {
       levels: vec![None; max_var],
       causes: vec![None; max_var],
       max_var: max_var,
+      watch_list: WatchList::from(&clause_db),
       clause_db: Arc::new(clause_db),
       level: 0,
     })
@@ -226,34 +229,3 @@ impl Solver {
     }
   }
 }
-
-/*
-// This is a pure dpll implementation, for correctness.
-impl Solver {
-  /// uses naive dpll solving in order to solve an SAT formula.
-  /// Will return a satisfying assignment if there is one, else it will return none.
-  pub fn dpll_solve(&mut self) -> Option<Vec<bool>> {
-    if self.bool_constraint_propogation().is_err() {
-      return None;
-    }
-    let all_sat = self.all_sat();
-    if all_sat {
-      return Some(self.assignments.iter().flat_map(|&i| i).collect());
-    } else if !self.has_unassigned_vars() {
-      return None;
-    }
-
-    let old_level = self.level;
-    self.next_level();
-    // Should always be ok for dpll solver
-    let lit = self.choose_lit();
-    self.with(lit);
-    self.dpll_solve().or_else(|| {
-      self.backtrack_to(old_level);
-      self.with(!lit);
-      self.dpll_solve()
-    })
-  }
-  pub fn all_sat(&self) -> bool { self.clauses.iter().all(|clause| self.satisfies(clause)) }
-}
-*/
