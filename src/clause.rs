@@ -9,9 +9,11 @@ pub struct ClauseHeader {
 */
 
 /// A CNF clause, where each of the literals is some variable in the entire expression
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Hash)]
 pub struct Clause {
   pub(crate) literals: Vec<Literal>,
+  //  marked_for_deletion: bool,
+  learnt: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -34,7 +36,6 @@ impl<'a> ClauseState<'a> {
 }
 
 impl Clause {
-  pub fn new() -> Self { Self { literals: vec![] } }
   pub fn push(&mut self, lit: Literal) { self.literals.push(lit); }
   pub fn is_empty(&self) -> bool { self.literals.is_empty() }
   pub fn is_sat(&self, assns: &Vec<Option<bool>>) -> bool {
@@ -106,15 +107,20 @@ impl Clause {
   pub fn from_negated_lits(lits: Vec<Literal>) -> Self {
     Clause {
       literals: lits.into_iter().map(|lit| !lit).collect(),
+      learnt: false,
     }
   }
+  pub fn mark_learnt(&mut self) { self.learnt = true; }
 }
 
 impl From<Vec<Literal>> for Clause {
   fn from(mut lits: Vec<Literal>) -> Self {
     lits.sort_unstable();
     lits.dedup();
-    Clause { literals: lits }
+    Clause {
+      literals: lits,
+      learnt: false,
+    }
   }
 }
 

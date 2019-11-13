@@ -1,10 +1,11 @@
 use crate::{
-  clause::{Clause, ClauseState},
+  clause::Clause,
+  database::{ClauseDatabase, ClauseRef},
   literal::Literal,
 };
-use std::{collections::HashSet, fmt, io};
+use std::{collections::HashSet, io, sync::Arc};
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 pub struct Solver {
   // which vars are assigned to what currently
   assignments: Vec<Option<bool>>,
@@ -17,19 +18,18 @@ pub struct Solver {
 
   /// keeps track of which clause caused a variable to be assigned.
   /// None in the case of unassigned or assumption
-  causes: Vec<Option<usize>>,
+  causes: Vec<Option<ClauseRef>>,
 
   // the maximum variable number
   max_var: usize,
-  // clauses for this Solver
-  clauses: Vec<Clause>,
+
+  // Shared Clause Database for this solver
+  clause_db: Arc<ClauseDatabase>,
+  // last_learnt_clause: usize,
+  // TODO do we need to track the last learnt clause?
+
   // which level is this solver currently at
   level: usize,
-}
-
-#[derive(Debug, PartialEq)]
-pub struct Conflict {
-  causes: Vec<usize>,
 }
 
 impl Solver {
@@ -45,14 +45,13 @@ impl Solver {
         if self.level == 0 {
           return None;
         }
-        println!("{:?}", self.levels.iter().enumerate().collect::<Vec<_>>());
-        let (learnt_clause, backtrack_lvl) = self.analyze(clause, self.level);
+        let (learnt_clause, backtrack_lvl) = self.analyze(&clause, self.level);
         println!(
           "Learned {}, backtracking to {}",
           learnt_clause, backtrack_lvl
         );
         self.backtrack_to(backtrack_lvl);
-        self.add_clause(learnt_clause);
+        self.clause_db.add_learnt(learnt_clause);
       }
     }
     Some(self.assignments.iter().flat_map(|&i| i).collect())
@@ -65,57 +64,59 @@ impl Solver {
       .count()
       > 0
   }
-  pub fn reason(&self, var: usize) -> Option<usize> { self.causes[var] }
+  pub fn reason(&self, var: usize) -> Option<&ClauseRef> { self.causes[var].as_ref() }
   /// Analyzes a conflict for a given variable
-  pub fn analyze(&self, clause_idx: usize, decision_level: usize) -> (Clause, usize) {
+  pub fn analyze(&self, src_clause: &ClauseRef, decision_level: usize) -> (Clause, usize) {
     let mut learnt: Vec<Literal> = Vec::with_capacity(1);
     let mut seen: HashSet<usize> = HashSet::new();
-    let mut find_causes = |clause_idx: usize,
-                           remaining: u32,
-                           trail_idx: usize,
-                           previous_lit: Option<Literal>|
-     -> (Option<usize>, u32, usize, Literal) {
-      let count: u32 = self.clauses[clause_idx]
-        .literals
-        .iter()
-        // only find new literals
-        .filter(|&it| previous_lit != Some(*it))
-        .map(|lit| match &self.levels[lit.var()] {
-          Some(0) => 0,
-          Some(lvl) if !seen.contains(&lit.var()) => {
-            seen.insert(lit.var());
-            if *lvl >= decision_level {
-              1
-            } else {
-              learnt.push(*lit);
-              0
-            }
-          },
-          _ => 0,
-        })
-        .sum();
-      let mut idx = trail_idx;
-      while !seen.contains(&self.assignment_trail[idx].var()) && idx > 0 {
-        idx = idx - 1;
-      }
-      let lit_on_path = self.assignment_trail[idx];
-      // should have previously seen this assignment
-      assert!(seen.remove(&lit_on_path.var()));
-      let conflict = self.reason(lit_on_path.var());
-      let next_remaining: u32 = (remaining + count).saturating_sub(1);
-      conflict.map(|cfl| println!("{}", self.clauses[cfl]));
-      (conflict, next_remaining, idx.saturating_sub(1), lit_on_path)
-    };
-    let mut causes = find_causes(clause_idx, 0, self.assignment_trail.len() - 1, None);
+    let mut learn_until_uip =
+      |cref: &ClauseRef, remaining: u32, trail_idx: usize, previous_lit: Option<Literal>| {
+        let count: u32 = self
+          .clause_db
+          .borrow_clause(cref)
+          .literals
+          .iter()
+          // only find new literals
+          .filter(|&it| previous_lit != Some(*it))
+          .map(|lit| match &self.levels[lit.var()] {
+            Some(0) => 0,
+            Some(lvl) if !seen.contains(&lit.var()) => {
+              seen.insert(lit.var());
+              if *lvl >= decision_level {
+                1
+              } else {
+                learnt.push(*lit);
+                0
+              }
+            },
+            _ => 0,
+          })
+          .sum();
+        let mut idx = trail_idx;
+        while !seen.contains(&self.assignment_trail[idx].var()) && idx > 0 {
+          idx = idx - 1;
+        }
+        let lit_on_path = self.assignment_trail[idx];
+        // should have previously seen this assignment
+        assert!(seen.remove(&lit_on_path.var()));
+        let conflict = self.reason(lit_on_path.var());
+        let next_remaining: u32 = (remaining + count).saturating_sub(1);
+        (conflict, next_remaining, idx.saturating_sub(1), lit_on_path)
+      };
+    // TODO convert to recursive call
+    let mut causes = learn_until_uip(src_clause, 0, self.assignment_trail.len() - 1, None);
     while causes.1 > 0 {
-      let conflict = causes.0.expect("Internal error, got no reason for implication");
-      causes = find_causes(conflict, causes.1, causes.2, Some(causes.3));
+      let conflict = causes
+        .0
+        .expect("Internal error, got no reason for implication");
+      causes = learn_until_uip(&conflict, causes.1, causes.2, Some(causes.3));
     }
     learnt.push(!causes.3);
     if learnt.len() == 1 {
       // backtrack to 0
       return (Clause::from(learnt), 0);
     }
+    // TODO possibly optimize for single pass?
     learnt.sort_by_cached_key(|lit| self.levels[lit.var()].unwrap());
     let max = self.levels[learnt[0].var()].unwrap();
     match learnt
@@ -133,8 +134,10 @@ impl Solver {
   /// This returns a result, where ok indicates all constraints propogated with no conflicts,
   /// and the error indicates which clause(by index) caused the error.
   #[must_use]
-  fn bool_constraint_propogation(&mut self) -> Result<(), usize> {
+  fn bool_constraint_propogation(&mut self) -> Result<(), ClauseRef> {
     let mut saw_constraint = true;
+    unimplemented!();
+    /*
     while saw_constraint {
       saw_constraint = false;
       for i in 0..self.clauses.len() {
@@ -149,6 +152,7 @@ impl Solver {
       }
     }
     Ok(())
+    */
   }
   pub fn satisfies(&self, clause: &Clause) -> bool {
     clause
@@ -165,12 +169,12 @@ impl Solver {
     assert_eq!(self.assignments[lit.var()].replace(lit.val()), None);
   }
   /// Constrains a given literal, due to some cause.
-  pub fn constraint(&mut self, lit: Literal, cause: usize) -> Result<(), usize> {
+  pub fn constraint(&mut self, lit: Literal, cause: ClauseRef) -> Result<(), usize> {
     if self.assignments[lit.var()] != None {
       return Err(lit.var());
     }
     self.with(lit);
-    assert_eq!(self.causes[lit.var()].replace(cause), None);
+    assert!(self.causes[lit.var()].replace(cause).is_none());
     Ok(())
   }
   pub fn next_level(&mut self) -> usize {
@@ -192,23 +196,38 @@ impl Solver {
     }
     count
   }
-  pub fn add_clause(&mut self, clause: Clause) { self.clauses.push(clause); }
   pub fn simplify() { unimplemented!() }
   pub fn from_dimacs<S: AsRef<std::path::Path>>(s: S) -> io::Result<Self> {
     use crate::dimacs::from_dimacs;
     let (clauses, max_var) = from_dimacs(s)?;
+    let clause_db = ClauseDatabase::from(clauses);
     Ok(Self {
       assignments: vec![None; max_var],
       assignment_trail: vec![],
       levels: vec![None; max_var],
       causes: vec![None; max_var],
       max_var: max_var,
-      clauses: clauses,
+      clause_db: Arc::new(clause_db),
       level: 0,
     })
   }
+  fn choose_lit(&self) -> Literal {
+    // naive strategy of picking first unassigned one
+    let var = self
+      .assignments
+      .iter()
+      .position(|v| v.is_none())
+      .expect("No unassigned variables");
+    Literal::new(var as u32, true)
+  }
+  pub fn reset_assignments(&mut self) {
+    for assn in self.assignments.iter_mut() {
+      assn.take();
+    }
+  }
 }
 
+/*
 // This is a pure dpll implementation, for correctness.
 impl Solver {
   /// uses naive dpll solving in order to solve an SAT formula.
@@ -236,25 +255,5 @@ impl Solver {
     })
   }
   pub fn all_sat(&self) -> bool { self.clauses.iter().all(|clause| self.satisfies(clause)) }
-  fn choose_lit(&self) -> Literal {
-    // naive strategy of picking first unassigned one
-    let var = self
-      .assignments
-      .iter()
-      .position(|v| v.is_none())
-      .expect("No unassigned variables");
-    Literal::new(var as u32, true)
-  }
 }
-
-impl fmt::Display for Solver {
-  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    if self.clauses.len() > 0 {
-      write!(f, "{}", self.clauses[0])?;
-      for clause in self.clauses.iter().skip(1) {
-        write!(f, " & {}", clause)?;
-      }
-    }
-    Ok(())
-  }
-}
+*/

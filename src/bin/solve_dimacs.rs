@@ -7,7 +7,7 @@ fn output(assns: Vec<bool>) -> String {
     .enumerate()
     .map(|(i, &val)| format!("{}", Literal::new((i + 1) as u32, val)))
     .collect::<Vec<_>>()
-    .join(" &")
+    .join(" & ")
 }
 
 fn main() {
@@ -15,6 +15,10 @@ fn main() {
     println!("Reading from: {}", arg);
     let mut solver = Solver::from_dimacs(arg).expect("Failed to create solver from dimacs");
     let out = solver.cdcl_solve();
-    println!("{:?}", out.map(output));
+    let output = match out {
+      None => String::from("UNSAT"),
+      Some(sol) => format!("SAT ({})", output(sol)),
+    };
+    println!("{}", output);
   }
 }
