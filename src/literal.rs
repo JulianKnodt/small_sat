@@ -1,21 +1,20 @@
 use std::{
-  fmt::{self, Display},
+  fmt::{self, Debug, Display},
   hash::Hash,
   ops::Not,
 };
 
 // Defines a literal
-#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Literal(u32);
 
 impl Literal {
   pub fn new(var: u32, negated: bool) -> Self { Self((var << 1) + (negated as u32)) }
   // Panics if this variable is not in the vector
+  /// returns the value for this literal given these assignments
   pub fn assn(&self, assignments: &Vec<Option<bool>>) -> Option<bool> {
     assignments[self.var()].map(|val| self.negated() ^ val)
   }
-  /// returns the bool which would return true for this literal
-  pub(crate) fn true_eval(&self) -> bool { !self.negated() }
   /// Returns the variable for this literal as a usize
   /// for convenient indexing
   pub fn var(&self) -> usize { (self.0 >> 1) as usize }

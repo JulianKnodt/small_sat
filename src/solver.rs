@@ -8,7 +8,7 @@ use std::{collections::HashSet, io, sync::Arc};
 
 #[derive(Clone, Debug)]
 pub struct Solver {
-  // which vars are assigned to what currently
+  /// which vars are assigned to what at the current stage
   assignments: Vec<Option<bool>>,
 
   /// stack of assignments, needed for backtracking
@@ -21,42 +21,59 @@ pub struct Solver {
   /// None in the case of unassigned or assumption
   causes: Vec<Option<ClauseRef>>,
 
-  // the maximum variable number
+  /// the maximum variable number
   max_var: usize,
 
-  // Shared Clause Database for this solver
+  /// Shared Clause Database for this solver
   clause_db: Arc<ClauseDatabase>,
-  // last_learnt_clause: usize,
-  // TODO do we need to track the last learnt clause?
+
+  /// Watch list for this solver, and where list of clauses is kept
   watch_list: WatchList,
 
-  // which level is this solver currently at
+  /// which level is this solver currently at
   level: usize,
 }
 
 impl Solver {
-  pub fn cdcl_solve(&mut self) -> Option<Vec<bool>> {
+  /// Attempt to find a satisfying assignment for the current solver
+  pub fn solve(&mut self) -> Option<Vec<bool>> {
     assert_eq!(self.level, 0);
-    if self.bool_constraint_propogation().is_err() {
-      return None;
-    }
     while self.has_unassigned_vars() {
       self.next_level();
-      self.with(self.choose_lit());
-      while let Err(clause) = self.bool_constraint_propogation() {
+      let mut propogation = self.with(self.choose_lit(), None);
+      while let Err(clause) = propogation {
         if self.level == 0 {
           return None;
         }
         let (learnt_clause, backtrack_lvl) = self.analyze(&clause, self.level);
-        println!(
-          "Learned {}, backtracking to {}",
-          learnt_clause, backtrack_lvl
-        );
         self.backtrack_to(backtrack_lvl);
-        self.clause_db.add_learnt(learnt_clause);
+        // TODO add broadcasting and learning here
+        let (cref, lit) = match self.add_learnt_clause(learnt_clause) {
+          Err(()) => return None,
+          Ok((cref, lit)) => (cref, lit),
+        };
+        propogation = self.with(lit, Some(cref));
       }
     }
     Some(self.assignments.iter().flat_map(|&i| i).collect())
+  }
+  pub fn add_learnt_clause(&mut self, c: Clause) -> Result<(ClauseRef, Literal), ()> {
+    let len = c.literals.len();
+    if len == 0 {
+      return Err(());
+    }
+    let cref = Arc::new(c);
+    // add a weaker version of this clause to the shared database
+    self.clause_db.add_learnt(Arc::downgrade(&cref));
+    let cref = ClauseRef::from(cref);
+    if len == 1 {
+      let lit = self.clause_db.borrow_clause(&cref).literals[0];
+      return Ok((cref, lit));
+    }
+    let lit = self
+      .watch_list
+      .add_learnt(&self.assignments, &cref, &self.clause_db);
+    return Ok((cref, lit));
   }
   pub fn has_unassigned_vars(&self) -> bool {
     self
@@ -105,12 +122,11 @@ impl Solver {
         let next_remaining: u32 = (remaining + count).saturating_sub(1);
         (conflict, next_remaining, idx.saturating_sub(1), lit_on_path)
       };
-    // TODO convert to recursive call
     let mut causes = learn_until_uip(src_clause, 0, self.assignment_trail.len() - 1, None);
     while causes.1 > 0 {
       let conflict = causes
         .0
-        .expect("Internal error, got no reason for implication");
+        .unwrap_or_else(|| panic!("Internal error, got no reason for implication: {:?}", self));
       causes = learn_until_uip(&conflict, causes.1, causes.2, Some(causes.3));
     }
     learnt.push(!causes.3);
@@ -133,51 +149,23 @@ impl Solver {
       },
     }
   }
-  /// This returns a result, where ok indicates all constraints propogated with no conflicts,
-  /// and the error indicates which clause(by index) caused the error.
-  #[must_use]
-  fn bool_constraint_propogation(&mut self) -> Result<(), ClauseRef> {
-    unimplemented!();
-    /*
-    let mut saw_constraint = true;
-    while saw_constraint {
-      saw_constraint = false;
-      for i in 0..self.clauses.len() {
-        match self.clauses[i].state(&self.assignments) {
-          ClauseState::SAT | ClauseState::UNDETERMINED => (),
-          ClauseState::UNSAT => return Err(i),
-          ClauseState::UNIT(&lit) => {
-            self.constraint(lit, i).map_err(|_| i)?;
-            saw_constraint = true;
-          },
-        };
-      }
-    }
-    Ok(())
-    */
-  }
-  pub fn satisfies(&self, clause: &Clause) -> bool {
-    clause
-      .literals
-      .iter()
-      .any(|lit| lit.assn(&self.assignments) == Some(true))
-  }
   /// Records a variable written at the current level
   /// with the given value. This is to only be used when a value is chosen,
   /// Not for implications.
-  fn with(&mut self, lit: Literal) {
+  fn with(&mut self, lit: Literal, cause: Option<ClauseRef>) -> Result<(), ClauseRef> {
+    if let Some(cref) = cause {
+      if self.assignments[lit.var()] != None {
+        return Err(cref);
+      }
+      assert!(self.causes[lit.var()].replace(cref).is_none());
+    }
     self.assignment_trail.push(lit);
     assert_eq!(self.levels[lit.var()].replace(self.level), None);
     assert_eq!(self.assignments[lit.var()].replace(lit.val()), None);
-  }
-  /// Constrains a given literal, due to some cause.
-  pub fn constraint(&mut self, lit: Literal, cause: ClauseRef) -> Result<(), usize> {
-    if self.assignments[lit.var()] != None {
-      return Err(lit.var());
-    }
-    self.with(lit);
-    assert!(self.causes[lit.var()].replace(cause).is_none());
-    Ok(())
+    let assns = self
+      .watch_list
+      .set(lit, &mut self.assignments, &self.clause_db);
+    self.apply_assignments(assns)
   }
   pub fn next_level(&mut self) -> usize {
     self.level += 1;
@@ -190,31 +178,56 @@ impl Solver {
     let mut count = 0;
     for var in 0..self.levels.len() {
       if self.levels[var].map_or(false, |assn_lvl| assn_lvl > lvl) {
-        assert!(self.assignments[var].take().is_some());
-        assert!(self.levels[var].take().is_some());
-        self.causes[var].take(); // cannot assert here cause it might have no cause
+        assert_ne!(self.assignments[var].take(), None);
+        assert_ne!(self.levels[var].take(), None);
+        assert_ne!(self.assignment_trail.pop(), None);
+        // cannot assert that every variable has a cause, might've randomly selected
+        self.causes[var].take();
         count += 1;
       }
     }
     count
   }
+  /// simplifies the current set of clauses for this solver
   pub fn simplify() { unimplemented!() }
   pub fn from_dimacs<S: AsRef<std::path::Path>>(s: S) -> io::Result<Self> {
     use crate::dimacs::from_dimacs;
     let (clauses, max_var) = from_dimacs(s)?;
     let clause_db = ClauseDatabase::from(clauses);
-    Ok(Self {
+    let (wl, units) = WatchList::new(&clause_db);
+    assert_eq!(
+      max_var, clause_db.max_vars,
+      "DIMACS file had incorrect max variable, given {}, computed: {}",
+      max_var, clause_db.max_vars
+    );
+    let mut solver = Self {
       assignments: vec![None; max_var],
+      causes: vec![None; max_var],
       assignment_trail: vec![],
       levels: vec![None; max_var],
-      causes: vec![None; max_var],
       max_var: max_var,
-      watch_list: WatchList::from(&clause_db),
+      watch_list: wl,
       clause_db: Arc::new(clause_db),
       level: 0,
-    })
+    };
+    solver.apply_assignments(units).expect("UNSAT");
+    Ok(solver)
   }
-  fn choose_lit(&self) -> Literal {
+  // TODO decide whether the output should be a single literal or multiple
+  fn apply_assignments(
+    &mut self,
+    unit_implications: Vec<(ClauseRef, Literal)>,
+  ) -> Result<(), ClauseRef> {
+    let result = unit_implications
+      .into_iter()
+      .find_map(|(cref, lit)| self.with(lit, Some(cref)).err());
+    match result {
+      Some(conflict) => Err(conflict),
+      None => Ok(()),
+    }
+  }
+  // which literal will be chosen next
+  pub fn choose_lit(&self) -> Literal {
     // naive strategy of picking first unassigned one
     let var = self
       .assignments
@@ -223,9 +236,7 @@ impl Solver {
       .expect("No unassigned variables");
     Literal::new(var as u32, true)
   }
-  pub fn reset_assignments(&mut self) {
-    for assn in self.assignments.iter_mut() {
-      assn.take();
-    }
-  }
+  /// resets the solver to it's initial state, retaining learnt clauses
+  // TODO reset any heuristics
+  pub fn reset_assignments(&mut self) { self.backtrack_to(0); }
 }

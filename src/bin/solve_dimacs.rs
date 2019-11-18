@@ -14,7 +14,7 @@ fn main() {
   for arg in env::args().skip(1).filter(|v| !v.starts_with("--")) {
     println!("Reading from: {}", arg);
     let mut solver = Solver::from_dimacs(arg).expect("Failed to create solver from dimacs");
-    let out = solver.cdcl_solve();
+    let out = solver.solve();
     let output = match out {
       None => String::from("UNSAT"),
       Some(sol) => format!("SAT ({})", output(sol)),

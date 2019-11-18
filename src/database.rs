@@ -1,7 +1,7 @@
 use crate::clause::Clause;
 use std::{
   ops::Deref,
-  sync::{Arc, RwLock},
+  sync::{Arc, RwLock, Weak},
 };
 
 // maybe want some append only log?
@@ -20,16 +20,16 @@ pub struct ClauseDatabase {
   // store them each individually
 
   // TODO isolate this behind some nice APIs? Hard given the lock
-  pub(crate) learnt_clauses: RwLock<Vec<Arc<Clause>>>,
+  pub(crate) learnt_clauses: RwLock<Vec<Weak<Clause>>>,
 }
 
 impl ClauseDatabase {
-  pub fn add_learnt(&self, c: Clause) {
+  pub fn add_learnt(&self, c: Weak<Clause>) {
     self
       .learnt_clauses
       .write()
       .expect("Failed to get clauses in add_clause")
-      .push(Arc::new(c));
+      .push(c);
   }
   pub fn borrow_clause<'a>(&'a self, cref: &'a ClauseRef) -> &'a Clause {
     match cref {
@@ -48,10 +48,22 @@ impl ClauseDatabase {
           .read()
           .unwrap()
           .iter()
-          .map(|r| ClauseRef::Learnt(Arc::clone(r)))
+          .filter_map(Weak::upgrade)
+          .map(|r| ClauseRef::Learnt(r))
           .collect::<Vec<_>>()
           .into_iter(),
       )
+  }
+}
+
+impl From<Vec<Clause>> for ClauseDatabase {
+  fn from(v: Vec<Clause>) -> Self {
+    let max_vars = v.iter().map(|c| c.max_var()).max().unwrap_or(0) + 1;
+    Self {
+      max_vars,
+      initial_clauses: v,
+      learnt_clauses: RwLock::new(vec![]),
+    }
   }
 }
 
@@ -63,13 +75,6 @@ pub enum ClauseRef {
   Initial(usize),
 }
 
-impl From<Vec<Clause>> for ClauseDatabase {
-  fn from(v: Vec<Clause>) -> Self {
-    let max_vars = v.iter().map(|c| c.max_var()).max().unwrap_or(0);
-    Self {
-      max_vars,
-      initial_clauses: v,
-      learnt_clauses: RwLock::new(vec![]),
-    }
-  }
+impl From<Arc<Clause>> for ClauseRef {
+  fn from(clause: Arc<Clause>) -> Self { ClauseRef::Learnt(clause) }
 }
