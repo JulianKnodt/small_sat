@@ -14,7 +14,7 @@ pub struct ClauseDatabase {
   // initial set of read only clauses.
   // They should only be simplified to be equivalent to
   // the original set of clauses given.
-  pub(crate) initial_clauses: Vec<Clause>,
+  pub initial_clauses: Vec<Clause>,
 
   // any learnt clause, each one is likely to be added individually so it is more efficient to
   // store them each individually
@@ -42,17 +42,19 @@ impl ClauseDatabase {
   pub fn iter(&self) -> impl Iterator<Item = ClauseRef> {
     (0..self.initial_clauses.len())
       .map(|idx| ClauseRef::Initial(idx))
-      .chain(
-        self
-          .learnt_clauses
-          .read()
-          .unwrap()
-          .iter()
-          .filter_map(Weak::upgrade)
-          .map(|r| ClauseRef::Learnt(r))
-          .collect::<Vec<_>>()
-          .into_iter(),
-      )
+      .chain(self.since(0))
+  }
+  pub fn since(&self, time: usize) -> impl Iterator<Item = ClauseRef> {
+    self
+      .learnt_clauses
+      .read()
+      .unwrap()
+      .iter()
+      .skip(time)
+      .filter_map(Weak::upgrade)
+      .map(|r| ClauseRef::Learnt(r))
+      .collect::<Vec<_>>()
+      .into_iter()
   }
 }
 

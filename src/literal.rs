@@ -51,10 +51,15 @@ mod test {
   use super::*;
   #[test]
   pub fn test_new_literal() {
-    let lit = Literal::from(-1);
-    assert_eq!(lit.var(), 0);
-    assert_eq!(lit.negated(), true);
-    assert_eq!(lit.val(), false);
+    (1..42i32).for_each(|var| {
+      let lit = Literal::from(-var);
+      assert_eq!(lit.var(), (var - 1) as usize);
+      assert!(lit.negated());
+      assert_eq!(lit.val(), false);
+      assert_eq!((!lit).var(), (var - 1) as usize);
+      assert!(!(!lit).negated());
+      assert_eq!((!lit).val(), true);
+    });
   }
 }
 

@@ -9,4 +9,7 @@ default-run = "solve_dimacs"
 
 [dependencies]
 rand = "0.7.2"
+core_affinity = { version = "0.5.9", optional = true }
 
+[features]
+build-binary = ["core_affinity"]
