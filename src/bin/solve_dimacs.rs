@@ -1,3 +1,5 @@
+extern crate core_affinity;
+
 use small_sat::{literal::Literal, solver::Solver};
 use std::{env, thread};
 
@@ -12,25 +14,51 @@ fn output(assns: &Vec<bool>) -> String {
 
 fn main() {
   // specify how many cores to run this on
-  let num_cores = 1;
   for arg in env::args().skip(1).filter(|v| !v.starts_with("--")) {
-    println!("Reading from: {}", arg);
-    let solver = Solver::from_dimacs(arg).expect("Failed to create solver from dimacs");
-    let handles = (0..num_cores).map(move |_| {
-      let mut solver = solver.clone();
-      thread::spawn(move || {
-        match solver.solve() {
-          None => println!("UNSAT"),
-          Some(sol) => {
-            println!("SAT ({})", output(&sol));
-            let ok = solver.db.initial_clauses.iter().all(|c| c.is_sat(&sol));
-            assert!(ok);
-          },
-        };
-      })
-    });
-    for handle in handles {
-      handle.join().expect("Thread panicked");
-    }
+    multi_threaded(&arg);
+    // single_threaded(&arg);
   }
+}
+
+#[allow(dead_code)]
+fn single_threaded(s: &'_ str) {
+  let mut solver = Solver::from_dimacs(s).expect("Could not open dimacs file");
+  match solver.solve() {
+    None => println!("UNSAT"),
+    Some(sol) => {
+      println!("SAT ({})", output(&sol));
+      let ok = solver.db.initial_clauses.iter().all(|c| c.is_sat(&sol));
+      assert!(ok);
+    },
+  };
+}
+
+#[allow(dead_code)]
+fn multi_threaded(s: &'_ str) {
+  use std::sync::mpsc::channel;
+  let core_ids = core_affinity::get_core_ids().expect("Could not get core ids");
+  let mut solvers = Solver::from_dimacs(s)
+    .expect("Could not open dimacs file")
+    .replicate(core_ids.len())
+    .expect("Failed to replicate solver");
+  let initials = solvers[0].db.initial_clauses.clone();
+
+  let (sender, receiver) = channel();
+  core_ids.into_iter().for_each(move |id| {
+    let mut solver = solvers.pop().unwrap();
+    let sender = sender.clone();
+    thread::spawn(move || {
+      core_affinity::set_for_current(id);
+      println!("Starting {}", solver.id());
+      sender.send(solver.solve()).expect("Failed to send");
+    });
+  });
+
+  match receiver.recv().unwrap() {
+    None => println!("UNSAT"),
+    Some(sol) => {
+      println!("SAT ({})", output(&sol));
+      assert!(initials.iter().all(|clause| clause.is_sat(&sol)));
+    },
+  };
 }

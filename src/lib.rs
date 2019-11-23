@@ -1,8 +1,10 @@
 mod clause;
+pub mod database;
 mod dimacs;
 pub mod literal;
-// mod var_state_cache;
-mod database;
+mod luby;
+// mod stats;
+mod var_state;
 mod watch_list;
 
 pub mod solver;

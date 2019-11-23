@@ -3,7 +3,7 @@ use crate::{
   literal::Literal,
 };
 
-use std::collections::HashMap;
+use hashbrown::HashMap;
 
 /// An implementation of occurrence lists based on MiniSat's OccList
 #[derive(Clone, Debug, PartialEq)]
@@ -12,7 +12,7 @@ pub struct WatchList {
   occurrences: Vec<HashMap<ClauseRef, Literal>>,
 }
 
-/// leaves enough space for both true and false variables up to max_vars.
+/// leaves enough space for both true and false variables up to max_var.
 fn space_for_all_lits(size: usize) -> usize { (size << 1) + 2 }
 
 impl WatchList {
@@ -20,7 +20,7 @@ impl WatchList {
   /// from the initial constraints
   pub fn new(db: &ClauseDatabase) -> (Self, Vec<(ClauseRef, Literal)>) {
     let mut wl = Self {
-      occurrences: vec![HashMap::new(); space_for_all_lits(db.max_vars)],
+      occurrences: vec![HashMap::new(); space_for_all_lits(db.max_var)],
     };
     let units = db
       .iter()
@@ -74,7 +74,8 @@ impl WatchList {
           match next.assn(assns) {
             Some(true) => panic!("Unexpected state, found true assignment"),
             Some(false) => (Some(next), unassn),
-            None if unassn != None => panic!("Unexpected state multi unassigned assignments"),
+            None if unassn != None =>
+              panic!("Unexpected state multiple unassigned literals in learnt"),
             None => (false_lit, Some(next)),
           }
         });
@@ -171,16 +172,88 @@ impl WatchList {
       })
       .collect()
   }
-
-  /*
-  // Checks that watch list invariants hold
-  fn assert_ok(&self) {
-    self.occurrences.iter().enumerate().for_each(|(lit, watches)| {
-      watches.iter().for_each(|(cref, other_lit)| {
-        assert_ne!(lit, other_lit.raw() as usize);
-        assert_eq!(self.occurrences[other_lit.raw() as usize][cref].raw() as usize, lit);
-      })
-    })
+  /// Adds a transferred clause to this watchlist.
+  /// If all literals are false
+  /// - And none have causes => Pick one at random(Maybe one with lowest priority)
+  /// - And some have causes => Pick one with highest level
+  /// Else if one literal is true, watch true lit and any false
+  /// Else if one literal is unassigned, watch it and any false and return it
+  /// Else watch unassigneds.
+  pub fn add_transfer(
+    &mut self,
+    assns: &Vec<Option<bool>>,
+    causes: &Vec<Option<ClauseRef>>,
+    levels: &Vec<Option<usize>>,
+    cref: &ClauseRef,
+    db: &ClauseDatabase,
+  ) -> Option<Literal> {
+    let literals = &db.borrow_clause(&cref).literals;
+    assert_ne!(0, literals.len(), "Empty clause transferred");
+    if literals.len() == 1 {
+      return match literals[0].assn(assns) {
+        Some(false) | None => Some(literals[0]),
+        Some(true) => None,
+      }
+    }
+    let (false_lits, other): (Vec<Literal>, Vec<_>) = literals
+      .iter()
+      .partition(|lit| lit.assn(assns) == Some(false));
+    match other.len() {
+      0 => {
+        let to_backtrack = *false_lits
+          .iter()
+          .filter(|lit| causes[lit.var()].is_some())
+          .max_by_key(|lit| levels[lit.var()])
+          .unwrap_or_else(|| &false_lits[0]);
+        let other_false = *false_lits
+          .iter()
+          .filter(|&&lit| lit != to_backtrack)
+          .next()
+          .expect("Other lit must exist");
+        assert_eq!(
+          self.occurrences[to_backtrack.raw() as usize].insert(cref.clone(), other_false),
+          None
+        );
+        assert_eq!(
+          self.occurrences[other_false.raw() as usize].insert(cref.clone(), to_backtrack),
+          None
+        );
+        Some(to_backtrack)
+      },
+      1 => {
+        let single = other[0];
+        if !self.occurrences[single.raw() as usize].contains_key(&cref) {
+          assert_eq!(
+            self.occurrences[single.raw() as usize].insert(cref.clone(), false_lits[0]),
+            None,
+          );
+          assert_eq!(
+            self.occurrences[false_lits[0].raw() as usize].insert(cref.clone(), single),
+            None,
+          );
+        }
+        match single.assn(assns) {
+          None => Some(single),
+          Some(true) => None,
+          Some(false) => unreachable!(),
+        }
+      },
+      _ if other
+        .iter()
+        .any(|lit| self.occurrences[lit.raw() as usize].contains_key(&cref)) =>
+        None,
+      _ => {
+        // If it's a duplicate clause, it's handled previously
+        assert_eq!(
+          self.occurrences[other[0].raw() as usize].insert(cref.clone(), other[1]),
+          None
+        );
+        assert_eq!(
+          self.occurrences[other[1].raw() as usize].insert(cref.clone(), other[0]),
+          None
+        );
+        None
+      },
+    }
   }
-  */
 }

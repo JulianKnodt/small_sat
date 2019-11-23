@@ -14,6 +14,7 @@ where
   let mut clauses = vec![];
   let mut max_var = 0;
   let mut curr_lits = vec![];
+  let mut max_seen_var = 0;
   for line in buf_reader.lines() {
     let line = line?;
     let line = line.trim();
@@ -40,9 +41,18 @@ where
             let complete_clause = mem::replace(&mut curr_lits, vec![]);
             clauses.push(Clause::from(complete_clause));
           },
-          v => curr_lits.push(Literal::from(v)),
+          v => {
+            let lit = Literal::from(v);
+            max_seen_var = max_seen_var.max(lit.var() + 1);
+            curr_lits.push(lit);
+          },
         });
     }
   }
+  assert_eq!(
+    max_seen_var, max_var,
+    "DIMAC's file max variable incorrect got {}, expected {}",
+    max_seen_var, max_var
+  );
   Ok((clauses, max_var))
 }

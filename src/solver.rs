@@ -2,12 +2,16 @@ use crate::{
   clause::Clause,
   database::{ClauseDatabase, ClauseRef},
   literal::Literal,
+  var_state::VariableState,
   watch_list::WatchList,
 };
-use std::{collections::HashSet, io, sync::Arc};
+use std::{collections::HashSet, sync::Arc};
 
 #[derive(Clone, Debug)]
 pub struct Solver {
+  /// The identifiying number for this solver
+  id: usize,
+
   /// which vars are assigned to what at the current stage
   assignments: Vec<Option<bool>>,
 
@@ -21,23 +25,33 @@ pub struct Solver {
   /// None in the case of unassigned or assumption
   causes: Vec<Option<ClauseRef>>,
 
-  /// the maximum variable number
-  max_var: usize,
-
   /// Shared Clause Database for this solver
   pub db: Arc<ClauseDatabase>,
 
   /// Watch list for this solver, and where list of clauses is kept
   watch_list: WatchList,
 
+  /// last assigned per each variable
+  /// initialized to false
+  polarities: Vec<bool>,
+
+  /// Var state independent decaying sum
+  var_state: VariableState,
+
+  /// vector clock of clauses for database
+  latest_clauses: Vec<usize>,
+
   /// which level is this solver currently at
   level: usize,
+  // /// Statistics for this solver
 }
 
 impl Solver {
   /// Attempt to find a satisfying assignment for the current solver
   pub fn solve(&mut self) -> Option<Vec<bool>> {
     assert_eq!(self.level, 0);
+    let mut unsolved_buffer = vec![];
+
     while self.has_unassigned_vars() {
       self.next_level();
       let lit = self.choose_lit();
@@ -48,16 +62,38 @@ impl Solver {
         }
         let (learnt_clause, backtrack_lvl) = self.analyze(&clause, self.level);
         self.backtrack_to(backtrack_lvl);
-        // println!("Learning {}", learnt_clause);
-
         // TODO add broadcasting and learning from others here
         let (cref, lit) = match self.add_learnt_clause(learnt_clause) {
           Some((cref, lit)) => (cref, lit),
           None => return None,
         };
+        self.var_state.decay();
         // assign resulting literal with the learnt clause as the cause
         conflict = self.with(lit, Some(cref));
         assert_eq!(self.assignments[lit.var()], Some(lit.val()));
+
+        // handle transfers when there are no more conflicts in own clauses
+        // but might need to handle conflicts here
+        if conflict == None {
+          let (new_clauses, new_timestamp) = self.db.since(&self.latest_clauses);
+          self.latest_clauses = new_timestamp;
+          unsolved_buffer.extend(new_clauses);
+          while let Some(transfer) = unsolved_buffer.pop() {
+            let next_lit = self.watch_list.add_transfer(
+              &self.assignments,
+              &self.causes,
+              &self.levels,
+              &transfer,
+              &self.db,
+            );
+            if let Some(next_lit) = next_lit {
+              conflict = self.with(next_lit, Some(transfer));
+              if conflict.is_some() {
+                break;
+              }
+            }
+          }
+        }
       }
     }
     Some(self.final_assignments())
@@ -72,20 +108,23 @@ impl Solver {
     }
     let cref = Arc::new(c);
     // add a weaker version of this clause to the shared database
-    self.db.add_learnt(Arc::downgrade(&cref));
+    self.latest_clauses[self.id] = self.db.add_learnt(self.id, Arc::downgrade(&cref));
     let cref = ClauseRef::from(cref);
     let lit = self
       .watch_list
       .add_learnt(&self.assignments, &cref, &self.db);
     return Some((cref, lit));
   }
-  // TODO convert this into an integer check instead of linear time
+  /// returns whether there are still unassigned variables for
+  /// this solver.
   pub fn has_unassigned_vars(&self) -> bool { self.assignment_trail.len() < self.assignments.len() }
+  pub fn assigned_vars(&self) -> usize { self.assignment_trail.len() }
   pub fn reason(&self, var: usize) -> Option<&ClauseRef> { self.causes[var].as_ref() }
   /// Analyzes a conflict for a given variable
-  pub fn analyze(&self, src_clause: &ClauseRef, decision_level: usize) -> (Clause, usize) {
+  pub fn analyze(&mut self, src_clause: &ClauseRef, decision_level: usize) -> (Clause, usize) {
     let mut learnt: Vec<Literal> = vec![];
     let mut seen: HashSet<usize> = HashSet::new();
+    let curr_len = self.assignment_trail.len() - 1;
     let mut learn_until_uip =
       |cref: &ClauseRef, remaining: u32, trail_idx: usize, previous_lit: Option<Literal>| {
         let count: u32 = self
@@ -120,7 +159,7 @@ impl Solver {
         let next_remaining: u32 = (remaining + count).saturating_sub(1);
         (conflict, next_remaining, idx.saturating_sub(1), lit_on_path)
       };
-    let mut causes = learn_until_uip(src_clause, 0, self.assignment_trail.len() - 1, None);
+    let mut causes = learn_until_uip(src_clause, 0, curr_len, None);
     while causes.1 > 0 {
       let conflict = causes
         .0
@@ -128,6 +167,9 @@ impl Solver {
       causes = learn_until_uip(&conflict, causes.1, causes.2, Some(causes.3));
     }
     learnt.push(!causes.3);
+    seen
+      .drain()
+      .for_each(|var| self.var_state.increase_var_activity(var));
     if learnt.len() == 1 {
       // backtrack to 0
       return (Clause::from(learnt), 0);
@@ -156,43 +198,33 @@ impl Solver {
       if self.levels[var].map_or(false, |assn_lvl| assn_lvl > lvl) {
         assert_ne!(self.assignments[var].take(), None);
         assert_ne!(self.levels[var].take(), None);
-        assert_ne!(self.assignment_trail.pop(), None);
-        // cannot assert that every variable has a cause, might've randomly selected
+        // assert_ne!(self.assignment_trail.pop(), None);
+        let trail = self.assignment_trail.pop().unwrap();
+        self.polarities[trail.var()] = trail.val();
+        // cannot assert that every variable has a cause, might've decided it
         self.causes[var].take();
+        self.var_state.enable(var);
       }
     }
-    assert_eq!(
-      self.assignment_trail.len(),
-      self.assignments.iter().filter(|it| it.is_some()).count()
-    );
-    assert_eq!(
-      self.assignment_trail.len(),
-      self.levels.iter().filter(|it| it.is_some()).count()
-    );
-    assert_eq!(
-      self.assignment_trail.len(),
-      self.assignments.iter().filter(|it| it.is_some()).count(),
-    );
   }
   /// simplifies the current set of clauses for this solver
   pub fn simplify() { unimplemented!() }
-  pub fn from_dimacs<S: AsRef<std::path::Path>>(s: S) -> io::Result<Self> {
+  pub fn from_dimacs<S: AsRef<std::path::Path>>(s: S) -> std::io::Result<Self> {
     use crate::dimacs::from_dimacs;
     let (clauses, max_var) = from_dimacs(s)?;
-    let db = ClauseDatabase::from(clauses);
+    let db = ClauseDatabase::new(max_var, clauses);
     let (wl, units) = WatchList::new(&db);
-    assert_eq!(
-      max_var, db.max_vars,
-      "DIMACS file had incorrect max variable, given {}, computed: {}",
-      max_var, db.max_vars
-    );
+    let var_state = VariableState::from(&db);
     let mut solver = Self {
+      id: db.next_id(),
       assignments: vec![None; max_var],
       causes: vec![None; max_var],
       assignment_trail: vec![],
       levels: vec![None; max_var],
-      max_var: max_var,
       watch_list: wl,
+      polarities: vec![false; max_var],
+      var_state,
+      latest_clauses: vec![0; db.learnt_clauses.len()],
       db: Arc::new(db),
       level: 0,
     };
@@ -227,14 +259,37 @@ impl Solver {
     }
     None
   }
-  // which literal will be chosen next
-  pub fn choose_lit(&self) -> Literal {
+  /// Chooese the next decision literal.
+  /// Must take a mutable reference because it must modify the heap of assignments
+  fn choose_lit(&mut self) -> Literal {
+    let var = loop {
+      let next = self.var_state.take_highest_prio();
+      if self.assignments[next].is_none() {
+        break next;
+      }
+    };
+    assert_eq!(self.assignments[var], None);
     // naive strategy of picking first unassigned one
-    let var = self
-      .assignments
-      .iter()
-      .position(|v| v.is_none())
-      .expect("No unassigned variables");
-    Literal::new(var as u32, false)
+    Literal::new(var as u32, !self.polarities[var])
+  }
+
+  /// Clones this solver and increments its id.
+  /// If the database cannot have more solvers
+  /// returns none.
+  pub fn duplicate(&self) -> Self {
+    let mut out = self.clone();
+    out.id = self.db.next_id();
+    out
+  }
+  pub fn id(&self) -> usize { self.id }
+  /// Replicates this one solver into multiple with the same state.
+  /// Returns none if replicate was called before.
+  pub fn replicate(mut self, n: usize) -> Option<Vec<Self>> {
+    self.latest_clauses = vec![0; n];
+    let db = Arc::get_mut(&mut self.db)?;
+    db.resize_to(n);
+    let mut replicas = (0..n - 1).map(|_| self.duplicate()).collect::<Vec<_>>();
+    replicas.push(self);
+    Some(replicas)
   }
 }

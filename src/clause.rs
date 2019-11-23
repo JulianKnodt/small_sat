@@ -11,7 +11,6 @@ pub struct Clause {
 
 impl Clause {
   pub fn is_empty(&self) -> bool { self.literals.is_empty() }
-  pub fn max_var(&self) -> usize { self.literals.iter().map(|lit| lit.var()).max().unwrap_or(0) }
   pub fn is_tautology(&self) -> bool {
     let mut seen: Vec<&Literal> = Vec::with_capacity(self.literals.len());
     self.literals.iter().any(|lit| {

@@ -9,7 +9,7 @@ default-run = "solve_dimacs"
 
 [dependencies]
 rand = "0.7.2"
-core_affinity = { version = "0.5.9", optional = true }
+core_affinity = "0.5.9"
+priority-queue = "0.6.0"
+hashbrown = "0.6"
 
-[features]
-build-binary = ["core_affinity"]

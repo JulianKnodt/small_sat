@@ -9,7 +9,7 @@ use std::{
 pub struct Literal(u32);
 
 impl Literal {
-  pub fn new(var: u32, negated: bool) -> Self { Self((var << 1) + (negated as u32)) }
+  pub const fn new(var: u32, negated: bool) -> Self { Self((var << 1) + (negated as u32)) }
   // Panics if this variable is not in the vector
   /// returns the value for this literal given these assignments
   pub fn assn(&self, assignments: &Vec<Option<bool>>) -> Option<bool> {
@@ -17,15 +17,15 @@ impl Literal {
   }
   /// Returns the variable for this literal as a usize
   /// for convenient indexing
-  pub fn var(&self) -> usize { (self.0 >> 1) as usize }
+  pub const fn var(&self) -> usize { (self.0 >> 1) as usize }
   /// Returns what the var is assigned to if this lit is chosen.
-  pub fn val(&self) -> bool { (self.0 & 1) == 0 }
-  pub fn negated(&self) -> bool { (self.0 & 1) == 1 }
-  pub fn is_negation(&self, o: &Self) -> bool { (self.0 ^ 1) == o.0 }
+  pub const fn val(&self) -> bool { (self.0 & 1) == 0 }
+  pub const fn negated(&self) -> bool { (self.0 & 1) == 1 }
+  pub const fn is_negation(&self, o: &Self) -> bool { (self.0 ^ 1) == o.0 }
   /// Returns the raw internal of the literal
   // chose not to make this a usize because then it might take extra space on some machines
-  // despite the fact that it's always a u32
-  pub fn raw(&self) -> u32 { self.0 }
+  // despite the fact that it's always a u32, even though it is only used as an index
+  pub const fn raw(&self) -> u32 { self.0 }
 }
 
 impl Not for Literal {
