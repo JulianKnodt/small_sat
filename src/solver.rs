@@ -63,10 +63,10 @@ impl Solver {
         let (learnt_clause, backtrack_lvl) = self.analyze(&clause, self.level);
         self.backtrack_to(backtrack_lvl);
         // TODO add broadcasting and learning from others here
-        let (cref, lit) = match self.add_learnt_clause(learnt_clause) {
-          Some((cref, lit)) => (cref, lit),
-          None => return None,
-        };
+        if learnt_clause.literals.len() == 0 {
+          return None;
+        }
+        let (cref, lit) = self.add_learnt_clause(learnt_clause);
         self.var_state.decay();
         // assign resulting literal with the learnt clause as the cause
         conflict = self.with(lit, Some(cref));
@@ -79,16 +79,17 @@ impl Solver {
           self.latest_clauses = new_timestamp;
           unsolved_buffer.extend(new_clauses);
           while let Some(transfer) = unsolved_buffer.pop() {
-            let next_lit = self.watch_list.add_transfer(
+            let transfer_outcome = self.watch_list.add_transfer(
               &self.assignments,
               &self.causes,
               &self.levels,
               &transfer,
               &self.db,
             );
-            if let Some(next_lit) = next_lit {
+            if let Some(next_lit) = transfer_outcome {
               conflict = self.with(next_lit, Some(transfer));
               if conflict.is_some() {
+                self.backtrack_to(self.levels[next_lit.var()].unwrap());
                 break;
               }
             }
@@ -102,10 +103,7 @@ impl Solver {
     self.assignments.iter().map(|&i| i.unwrap()).collect()
   }
   /// adds a learnt clause to this solver
-  pub fn add_learnt_clause(&mut self, c: Clause) -> Option<(ClauseRef, Literal)> {
-    if c.literals.len() == 0 {
-      return None;
-    }
+  pub fn add_learnt_clause(&mut self, c: Clause) -> (ClauseRef, Literal) {
     let cref = Arc::new(c);
     // add a weaker version of this clause to the shared database
     self.latest_clauses[self.id] = self.db.add_learnt(self.id, Arc::downgrade(&cref));
@@ -113,7 +111,7 @@ impl Solver {
     let lit = self
       .watch_list
       .add_learnt(&self.assignments, &cref, &self.db);
-    return Some((cref, lit));
+    (cref, lit)
   }
   /// returns whether there are still unassigned variables for
   /// this solver.

@@ -50,7 +50,8 @@ fn multi_threaded(s: &'_ str) {
     thread::spawn(move || {
       core_affinity::set_for_current(id);
       println!("Starting {}", solver.id());
-      sender.send(solver.solve()).expect("Failed to send");
+      // Safe to ignore error here because only care about first that finishes
+      let _ = sender.send(solver.solve());
     });
   });
 
