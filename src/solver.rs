@@ -4,8 +4,12 @@ use crate::{
   literal::Literal,
   var_state::VariableState,
   watch_list::WatchList,
+  luby::RestartState,
 };
 use std::{collections::HashSet, sync::Arc};
+
+pub const RESTART_BASE: u64 = 100;
+pub const RESTART_INC: u64 = 2;
 
 #[derive(Clone, Debug)]
 pub struct Solver {
@@ -44,6 +48,9 @@ pub struct Solver {
   /// which level is this solver currently at
   level: usize,
   // /// Statistics for this solver
+
+  /// Restart State using Luby
+  restart_state: RestartState,
 }
 
 impl Solver {
@@ -57,6 +64,7 @@ impl Solver {
       let lit = self.choose_lit();
       let mut conflict = self.with(lit, None);
       while let Some(clause) = conflict {
+        self.restart_state.notify_conflict();
         if self.level == 0 {
           return None;
         }
@@ -94,6 +102,10 @@ impl Solver {
             }
           }
         }
+      }
+      if self.restart_state.restart_suggested() {
+        self.restart_state.restart();
+        self.backtrack_to(0);
       }
     }
     Some(self.final_assignments())
@@ -223,6 +235,7 @@ impl Solver {
       latest_clauses: vec![0; db.learnt_clauses.len()],
       db: Arc::new(db),
       level: 0,
+      restart_state: RestartState::new(RESTART_BASE, RESTART_INC),
     };
     for (cause, lit) in units {
       assert_eq!(solver.with(lit, Some(cause)), None, "UNSAT");

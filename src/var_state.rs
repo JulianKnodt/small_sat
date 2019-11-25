@@ -1,8 +1,8 @@
 extern crate priority_queue;
 
 use crate::{clause::Clause, database::ClauseDatabase};
-use priority_queue::PriorityQueue;
 use hashbrown::HashMap;
+use priority_queue::PriorityQueue;
 
 #[derive(PartialOrd, Debug, PartialEq, Clone, Copy)]
 struct Priority(f32);
@@ -42,10 +42,7 @@ impl VariableState {
       .priorities
       .iter_mut()
       .for_each(|(_, v)| v.0 /= decay_rate);
-    self
-      .evicted
-      .values_mut()
-      .for_each(|v| v.0 /= decay_rate);
+    self.evicted.values_mut().for_each(|v| v.0 /= decay_rate);
   }
   /// Increases the activity for this variable
   pub fn increase_var_activity(&mut self, var: usize) {
