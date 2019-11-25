@@ -15,8 +15,9 @@ fn output(assns: &Vec<bool>) -> String {
 fn main() {
   // specify how many cores to run this on
   for arg in env::args().skip(1).filter(|v| !v.starts_with("--")) {
-    multi_threaded(&arg);
-    // single_threaded(&arg);
+    println!("Solving {}", arg);
+    // multi_threaded(&arg);
+    single_threaded(&arg);
   }
 }
 

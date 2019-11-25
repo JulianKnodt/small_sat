@@ -62,7 +62,6 @@ impl Solver {
         }
         let (learnt_clause, backtrack_lvl) = self.analyze(&clause, self.level);
         self.backtrack_to(backtrack_lvl);
-        // TODO add broadcasting and learning from others here
         if learnt_clause.literals.len() == 0 {
           return None;
         }
@@ -196,7 +195,6 @@ impl Solver {
       if self.levels[var].map_or(false, |assn_lvl| assn_lvl > lvl) {
         assert_ne!(self.assignments[var].take(), None);
         assert_ne!(self.levels[var].take(), None);
-        // assert_ne!(self.assignment_trail.pop(), None);
         let trail = self.assignment_trail.pop().unwrap();
         self.polarities[trail.var()] = trail.val();
         // cannot assert that every variable has a cause, might've decided it

@@ -2,6 +2,7 @@ extern crate priority_queue;
 
 use crate::{clause::Clause, database::ClauseDatabase};
 use priority_queue::PriorityQueue;
+use hashbrown::HashMap;
 
 #[derive(PartialOrd, Debug, PartialEq, Clone, Copy)]
 struct Priority(f32);
@@ -21,6 +22,8 @@ impl From<f32> for Priority {
 pub struct VariableState {
   // Variable -> activity
   priorities: PriorityQueue<usize, Priority>,
+  /// buffer for assigned variables
+  evicted: HashMap<usize, Priority>,
   /// constant rate of decay for this state
   pub decay_rate: f32,
 
@@ -39,6 +42,10 @@ impl VariableState {
       .priorities
       .iter_mut()
       .for_each(|(_, v)| v.0 /= decay_rate);
+    self
+      .evicted
+      .values_mut()
+      .for_each(|v| v.0 /= decay_rate);
   }
   /// Increases the activity for this variable
   pub fn increase_var_activity(&mut self, var: usize) {
@@ -54,20 +61,19 @@ impl VariableState {
       .for_each(|lit| self.increase_var_activity(lit.var()));
   }
   pub fn enable(&mut self, var: usize) {
-    self
-      .priorities
-      .change_priority_by(&var, |Priority(p)| Priority(p.abs()));
+    let prev = self.evicted.remove(&var);
+    if let Some(prev) = prev {
+      self.priorities.push(var, prev);
+    }
   }
   /// returns the variable with highest priority
   /// Modifies the internal state so that the variable cannot be picked again
   /// Until it is re-enabled
   pub fn take_highest_prio(&mut self) -> usize {
-    let next = *self.priorities.peek().unwrap().0;
-    self.priorities.change_priority_by(&next, |Priority(p)| {
-      assert!(p >= 0.0);
-      Priority(-p)
-    });
-    next
+    // assert!(self.priorities.iter().any(|p| (p.1).0 > 0.0));
+    let next = self.priorities.pop().unwrap();
+    self.evicted.insert(next.0, next.1);
+    next.0
   }
 }
 
@@ -81,6 +87,7 @@ impl From<&'_ ClauseDatabase> for VariableState {
     let priorities = PriorityQueue::from(items);
     let mut state = Self {
       priorities,
+      evicted: HashMap::new(),
       decay_rate: DEFAULT_DECAY_RATE,
       inc_amt: DEFAULT_INC_AMT,
     };
