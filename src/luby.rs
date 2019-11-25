@@ -1,3 +1,6 @@
+// replicated from Minisat
+// Find the finite subsequence that contains index 'x', and the
+// size of that subsequence:
 pub fn luby(mut x: u64, y: u64) -> u64 {
   let mut size = 1;
   let mut seq = 0;
@@ -35,14 +38,13 @@ impl RestartState {
     }
   }
   pub fn notify_conflict(&mut self) {
-    self.remaining = self.remaining.saturating_sub(0);
+    self.remaining = self.remaining.saturating_sub(1);
   }
   pub fn restart_suggested(&self) -> bool {
     self.remaining == 0
   }
   pub fn restart(&mut self) {
     self.num_restarts += 1;
-
     let new_remaining =
       luby(self.restart_inc_interval, self.num_restarts) * self.base_restart_interval;
     self.remaining = new_remaining;
