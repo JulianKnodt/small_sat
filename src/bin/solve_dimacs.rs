@@ -24,12 +24,14 @@ fn main() {
 #[allow(dead_code)]
 fn single_threaded(s: &'_ str) {
   let mut solver = Solver::from_dimacs(s).expect("Could not open dimacs file");
-  match solver.solve() {
+  let result = solver.solve();
+  println!("{:?}", solver.stats);
+  println!("{:?}", solver.stats.start_time.elapsed());
+  match result {
     None => println!("UNSAT"),
     Some(sol) => {
-      println!("SAT ({})", output(&sol));
-      let ok = solver.db.initial_clauses.iter().all(|c| c.is_sat(&sol));
-      assert!(ok);
+      assert!(solver.db.initial_clauses.iter().all(|c| c.is_sat(&sol)));
+      println!("SAT");
     },
   };
 }
