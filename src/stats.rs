@@ -1,4 +1,4 @@
-use std::time::{Instant};
+use std::time::Instant;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Stats {
@@ -42,8 +42,8 @@ impl Stats {
       Record::Restart => self.restarts += 1,
       Record::LearnedClause => self.clauses_learned += 1,
       Record::Propogation => self.propogations += 1,
-      Record::Written(n) => self.propogations += n,
-      Record::Transferred(n) => self.propogations += n,
+      Record::Written(n) => self.written_clauses += n,
+      Record::Transferred(n) => self.transferred_clauses += n,
     };
   }
 }

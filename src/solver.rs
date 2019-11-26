@@ -3,11 +3,12 @@ use crate::{
   database::{ClauseDatabase, ClauseRef},
   literal::Literal,
   luby::RestartState,
+  stats::{Record, Stats},
   var_state::VariableState,
   watch_list::WatchList,
-  stats::{Stats, Record},
 };
-use std::{collections::HashSet, sync::Arc};
+use hashbrown::HashSet;
+use std::sync::Arc;
 
 pub const RESTART_BASE: u64 = 100;
 pub const RESTART_INC: u64 = 2;
@@ -91,7 +92,9 @@ impl Solver {
         // but might need to handle conflicts here
         if conflict == None {
           let (new_clauses, new_timestamp) = self.db.since(&self.latest_clauses);
-          self.stats.record(Record::Transferred(new_clauses.len() as u32));
+          self
+            .stats
+            .record(Record::Transferred(new_clauses.len() as u32));
           self.latest_clauses = new_timestamp;
           unsolved_buffer.extend(new_clauses);
           while let Some(transfer) = unsolved_buffer.pop() {
@@ -111,7 +114,9 @@ impl Solver {
           }
         }
       }
-      self.stats.record(Record::Written(to_write_buffer.len() as u32));
+      self
+        .stats
+        .record(Record::Written(to_write_buffer.len() as u32));
       self.latest_clauses[self.id] = self.db.add_learnts(self.id, &mut to_write_buffer);
       assert!(to_write_buffer.is_empty());
       if self.restart_state.restart_suggested() {
@@ -177,9 +182,19 @@ impl Solver {
         .unwrap_or_else(|| panic!("Internal error, got no reason for implication: {:?}", self));
       causes = learn_until_uip(&conflict, causes.1, causes.2, Some(causes.3));
     }
+    // minimization before adding asserting literal
+    let mut removable = HashSet::new();
+    let mut failed = HashSet::new();
+    learnt.retain(|lit| {
+      self.causes[lit.var()].is_none()
+        || !self.lit_redundant(*lit, &mut seen, &mut removable, &mut failed)
+    });
+    // add asserting literal
     learnt.push(!causes.3);
     seen
       .drain()
+      .chain(removable.drain())
+      .chain(failed.drain())
       .for_each(|var| self.var_state.increase_var_activity(var));
     if learnt.len() == 1 {
       // backtrack to 0
@@ -304,5 +319,45 @@ impl Solver {
     let mut replicas = (0..n - 1).map(|_| self.duplicate()).collect::<Vec<_>>();
     replicas.push(self);
     Some(replicas)
+  }
+  fn lit_redundant(
+    &self,
+    lit: Literal,
+    seen: &HashSet<usize>,
+    removable: &mut HashSet<usize>,
+    failed: &mut HashSet<usize>,
+  ) -> bool {
+    assert!(!removable.contains(&lit.var()));
+    assert!(!failed.contains(&lit.var()));
+    let mut remaining = vec![lit];
+    while let Some(curr) = remaining.pop() {
+      let clause = self.reason(curr.var()).expect("Failed to find reason in lit_redundant");
+      let lits = clause
+        .literals
+        .iter()
+        // ignore asserting literals
+        .filter(|lit| self.reason(lit.var()) != Some(clause));
+      for lit in lits {
+        let prev_removable = self.levels[lit.var()] == Some(0)
+          || seen.contains(&lit.var())
+          || removable.contains(&lit.var());
+        if prev_removable {
+          continue;
+        }
+        if self.reason(lit.var()) == None || failed.contains(&lit.var()) {
+          remaining.into_iter().chain(std::iter::once(*lit)).for_each(|lit| {
+            if !seen.contains(&lit.var()) {
+              failed.insert(lit.var());
+            }
+          });
+          return false;
+        }
+        remaining.push(*lit);
+      }
+      if !seen.contains(&lit.var()) {
+        removable.insert(lit.var());
+      }
+    }
+    true
   }
 }

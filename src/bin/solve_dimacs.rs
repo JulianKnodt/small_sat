@@ -3,6 +3,7 @@ extern crate core_affinity;
 use small_sat::{literal::Literal, solver::Solver};
 use std::{env, thread};
 
+#[allow(dead_code)]
 fn output(assns: &Vec<bool>) -> String {
   assns
     .iter()
