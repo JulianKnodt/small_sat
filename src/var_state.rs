@@ -88,8 +88,7 @@ impl From<&'_ ClauseDatabase> for VariableState {
       decay_rate: DEFAULT_DECAY_RATE,
       inc_amt: DEFAULT_INC_AMT,
     };
-    db.iter()
-      .for_each(|cref| state.add_clause(db.borrow_clause(&cref)));
+    db.iter().for_each(|cref| state.add_clause(&cref));
     state
   }
 }

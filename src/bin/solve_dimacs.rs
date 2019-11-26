@@ -52,15 +52,18 @@ fn multi_threaded(s: &'_ str) {
       core_affinity::set_for_current(id);
       println!("Starting {}", solver.id());
       // Safe to ignore error here because only care about first that finishes
-      let _ = sender.send(solver.solve());
+      let result = solver.solve();
+      println!("{:?}", solver.stats);
+      println!("{:?}", solver.stats.start_time.elapsed());
+      let _ = sender.send(result);
     });
   });
 
   match receiver.recv().unwrap() {
     None => println!("UNSAT"),
     Some(sol) => {
-      println!("SAT ({})", output(&sol));
       assert!(initials.iter().all(|clause| clause.is_sat(&sol)));
+      println!("SAT");
     },
   };
 }

@@ -34,12 +34,8 @@ impl ClauseDatabase {
       learnt_clauses,
     }
   }
-  /// adds a clause to the database and returns how
-  pub fn add_learnt(&self, id: usize, c: Weak<Clause>) -> usize {
-    let mut learnt_clauses = self.learnt_clauses[id].write().unwrap();
-    learnt_clauses.push(c);
-    learnt_clauses.len()
-  }
+  /// adds a batch of learnt clauses to the database and returns the new timestamp of the
+  /// process
   pub fn add_learnts(&self, id: usize, c: &mut Vec<Weak<Clause>>) -> usize {
     let mut learnt_clauses = self.learnt_clauses[id].write().unwrap();
     learnt_clauses.append(c);
@@ -52,9 +48,7 @@ impl ClauseDatabase {
     *id += 1;
     *id - 1
   }
-  pub fn borrow_clause<'a>(&'a self, cref: &'a ClauseRef) -> &'a Clause { cref.inner.deref() }
-  // potentially expensive as it clones all the references to the learnt clauses at the same
-  // time
+
   pub fn iter(&self) -> impl Iterator<Item = ClauseRef> + '_ {
     (0..self.initial_clauses.len())
       .map(move |i| ClauseRef::from(self.initial_clauses[i].clone()))

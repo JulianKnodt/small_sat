@@ -5,6 +5,7 @@ use crate::{
   luby::RestartState,
   var_state::VariableState,
   watch_list::WatchList,
+  stats::{Stats, Record},
 };
 use std::{collections::HashSet, sync::Arc};
 
@@ -50,6 +51,8 @@ pub struct Solver {
   // /// Statistics for this solver
   /// Restart State using Luby
   restart_state: RestartState,
+
+  pub stats: Stats,
 }
 
 impl Solver {
@@ -57,7 +60,7 @@ impl Solver {
   pub fn solve(&mut self) -> Option<Vec<bool>> {
     assert_eq!(self.level, 0);
     let mut unsolved_buffer = vec![];
-    // let mut to_write_buffer = vec![];
+    let mut to_write_buffer = vec![];
 
     while self.has_unassigned_vars() {
       self.next_level();
@@ -68,13 +71,17 @@ impl Solver {
         if self.level == 0 {
           return None;
         }
+        self.stats.record(Record::LearnedClause);
         let (learnt_clause, backtrack_lvl) = self.analyze(&clause, self.level);
         self.backtrack_to(backtrack_lvl);
         if learnt_clause.literals.len() == 0 {
           return None;
         }
-        let (cref, lit) = self.add_learnt_clause(learnt_clause);
-        // to_write_buffer.push(cref);
+        let cref = Arc::new(learnt_clause);
+        to_write_buffer.push(Arc::downgrade(&cref));
+        let cref = ClauseRef::from(cref);
+        let lit = self.watch_list.add_learnt(&self.assignments, &cref);
+
         self.var_state.decay();
         // assign resulting literal with the learnt clause as the cause
         conflict = self.with(lit, Some(cref));
@@ -84,6 +91,7 @@ impl Solver {
         // but might need to handle conflicts here
         if conflict == None {
           let (new_clauses, new_timestamp) = self.db.since(&self.latest_clauses);
+          self.stats.record(Record::Transferred(new_clauses.len() as u32));
           self.latest_clauses = new_timestamp;
           unsolved_buffer.extend(new_clauses);
           while let Some(transfer) = unsolved_buffer.pop() {
@@ -103,25 +111,22 @@ impl Solver {
           }
         }
       }
-      // self.latest_clauses[self.id] = self.db.add_learnts(self.id, &mut to_write_buffer);
+      self.stats.record(Record::Written(to_write_buffer.len() as u32));
+      self.latest_clauses[self.id] = self.db.add_learnts(self.id, &mut to_write_buffer);
+      assert!(to_write_buffer.is_empty());
       if self.restart_state.restart_suggested() {
+        self.stats.record(Record::Restart);
         self.restart_state.restart();
         self.backtrack_to(0);
       }
     }
     Some(self.final_assignments())
   }
+
+  /// gets the final assignments for this solver
+  /// panicks if one is still null
   pub fn final_assignments(&self) -> Vec<bool> {
     self.assignments.iter().map(|&i| i.unwrap()).collect()
-  }
-  /// adds a learnt clause to this solver
-  pub fn add_learnt_clause(&mut self, c: Clause) -> (ClauseRef, Literal) {
-    let cref = Arc::new(c);
-    // add a weaker version of this clause to the shared database
-    self.latest_clauses[self.id] = self.db.add_learnt(self.id, Arc::downgrade(&cref));
-    let cref = ClauseRef::from(cref);
-    let lit = self.watch_list.add_learnt(&self.assignments, &cref);
-    (cref, lit)
   }
   /// returns whether there are still unassigned variables for
   /// this solver.
@@ -233,6 +238,7 @@ impl Solver {
       db: Arc::new(db),
       level: 0,
       restart_state: RestartState::new(RESTART_BASE, RESTART_INC),
+      stats: Stats::new(),
     };
     for (cause, lit) in units {
       assert_eq!(solver.with(lit, Some(cause)), None, "UNSAT");
@@ -251,6 +257,7 @@ impl Solver {
       }
       self.assignment_trail.push(lit);
       if let Some(cause) = cause {
+        self.stats.record(Record::Propogation);
         assert_eq!(self.causes[lit.var()].replace(cause), None);
       }
       assert_eq!(self.levels[lit.var()].replace(self.level), None);
