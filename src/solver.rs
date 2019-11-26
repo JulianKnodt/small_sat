@@ -2,9 +2,9 @@ use crate::{
   clause::Clause,
   database::{ClauseDatabase, ClauseRef},
   literal::Literal,
+  luby::RestartState,
   var_state::VariableState,
   watch_list::WatchList,
-  luby::RestartState,
 };
 use std::{collections::HashSet, sync::Arc};
 
@@ -48,7 +48,6 @@ pub struct Solver {
   /// which level is this solver currently at
   level: usize,
   // /// Statistics for this solver
-
   /// Restart State using Luby
   restart_state: RestartState,
 }
@@ -58,6 +57,7 @@ impl Solver {
   pub fn solve(&mut self) -> Option<Vec<bool>> {
     assert_eq!(self.level, 0);
     let mut unsolved_buffer = vec![];
+    // let mut to_write_buffer = vec![];
 
     while self.has_unassigned_vars() {
       self.next_level();
@@ -74,6 +74,7 @@ impl Solver {
           return None;
         }
         let (cref, lit) = self.add_learnt_clause(learnt_clause);
+        // to_write_buffer.push(cref);
         self.var_state.decay();
         // assign resulting literal with the learnt clause as the cause
         conflict = self.with(lit, Some(cref));
@@ -91,7 +92,6 @@ impl Solver {
               &self.causes,
               &self.levels,
               &transfer,
-              &self.db,
             );
             if let Some(next_lit) = transfer_outcome {
               conflict = self.with(next_lit, Some(transfer));
@@ -103,6 +103,7 @@ impl Solver {
           }
         }
       }
+      // self.latest_clauses[self.id] = self.db.add_learnts(self.id, &mut to_write_buffer);
       if self.restart_state.restart_suggested() {
         self.restart_state.restart();
         self.backtrack_to(0);
@@ -119,9 +120,7 @@ impl Solver {
     // add a weaker version of this clause to the shared database
     self.latest_clauses[self.id] = self.db.add_learnt(self.id, Arc::downgrade(&cref));
     let cref = ClauseRef::from(cref);
-    let lit = self
-      .watch_list
-      .add_learnt(&self.assignments, &cref, &self.db);
+    let lit = self.watch_list.add_learnt(&self.assignments, &cref);
     (cref, lit)
   }
   /// returns whether there are still unassigned variables for
@@ -136,9 +135,7 @@ impl Solver {
     let curr_len = self.assignment_trail.len() - 1;
     let mut learn_until_uip =
       |cref: &ClauseRef, remaining: u32, trail_idx: usize, previous_lit: Option<Literal>| {
-        let count: u32 = self
-          .db
-          .borrow_clause(cref)
+        let count: u32 = cref
           .literals
           .iter()
           // only find new literals
@@ -260,7 +257,7 @@ impl Solver {
       assert_eq!(self.assignments[lit.var()].replace(lit.val()), None);
       let new_units = self
         .watch_list
-        .set(lit, &mut self.assignments, &self.db)
+        .set(lit, &mut self.assignments)
         .into_iter()
         .map(|(cause, lit)| (Some(cause), lit));
       // does order matter here? dunno fuc it

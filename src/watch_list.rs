@@ -24,19 +24,14 @@ impl WatchList {
     };
     let units = db
       .iter()
-      .filter_map(|cref| wl.watch(&cref, db).map(|lit| (cref, lit)))
+      .filter_map(|cref| wl.watch(&cref).map(|lit| (cref, lit)))
       .collect();
     (wl, units)
   }
   /// Adds some clause from the given database to this list.
   /// It must not have previously been added to the list.
-  fn watch(&mut self, cref: &ClauseRef, db: &ClauseDatabase) -> Option<Literal> {
-    let lits = db
-      .borrow_clause(cref)
-      .literals
-      .iter()
-      .take(2)
-      .collect::<Vec<_>>();
+  fn watch(&mut self, cref: &ClauseRef) -> Option<Literal> {
+    let lits = cref.literals.iter().take(2).collect::<Vec<_>>();
     match lits.len() {
       0 => panic!("Empty clause passed to watch: {:?}", cref),
       1 => Some(*lits[0]),
@@ -49,19 +44,13 @@ impl WatchList {
   }
   /// adds a learnt clause, which is assumed to have at least two literals as well as cause
   /// and implication.
-  pub(crate) fn add_learnt(
-    &mut self,
-    assns: &Vec<Option<bool>>,
-    cref: &ClauseRef,
-    db: &ClauseDatabase,
-  ) -> Literal {
-    let clause = db.borrow_clause(cref);
-    if clause.literals.len() == 1 {
-      return clause.literals[0];
+  pub(crate) fn add_learnt(&mut self, assns: &Vec<Option<bool>>, cref: &ClauseRef) -> Literal {
+    if cref.literals.len() == 1 {
+      return cref.literals[0];
     }
     let mut false_lit = None;
     let mut unassn = None;
-    for next in &db.borrow_clause(cref).literals {
+    for next in &cref.literals {
       match next.assn(assns) {
         Some(true) => panic!("Unexpected state, found true assignment"),
         Some(false) => false_lit.replace(*next),
@@ -70,30 +59,19 @@ impl WatchList {
       };
     }
     let unassn = unassn.expect("Unexpected state, no unassigned lit in learnt clause");
-    let false_lit =
-      false_lit.unwrap_or_else(|| panic!("No false lit in clause {:?}", db.borrow_clause(cref)));
+    let false_lit = false_lit.unwrap_or_else(|| panic!("No false lit in clause {:?}", cref));
     if !self.occurrences[unassn.raw() as usize].contains_key(&cref) {
       assert!(self.add_clause_with_lits(cref.clone(), false_lit, unassn));
     }
     unassn
   }
-  pub fn set(
-    &mut self,
-    lit: Literal,
-    assns: &Vec<Option<bool>>,
-    db: &ClauseDatabase,
-  ) -> Vec<(ClauseRef, Literal)> {
+  pub fn set(&mut self, lit: Literal, assns: &Vec<Option<bool>>) -> Vec<(ClauseRef, Literal)> {
     // Sanity check that we actually assigned this variable
     assert_eq!(lit.assn(assns), Some(true));
-    self.set_false(!lit, assns, db)
+    self.set_false(!lit, assns)
   }
   /// Sets a given literal to false in this watch list
-  fn set_false(
-    &mut self,
-    lit: Literal,
-    assns: &Vec<Option<bool>>,
-    db: &ClauseDatabase,
-  ) -> Vec<(ClauseRef, Literal)> {
+  fn set_false(&mut self, lit: Literal, assns: &Vec<Option<bool>>) -> Vec<(ClauseRef, Literal)> {
     let clauses = match self.occurrences.get_mut(lit.raw() as usize) {
       // If there were no literals being watched for this, there must be no implications
       None => return vec![],
@@ -119,7 +97,7 @@ impl WatchList {
           assert_ne!(o_lit, lit);
           return None;
         }
-        let literals = &db.borrow_clause(&cref).literals;
+        let literals = &cref.literals;
         let next = literals
           .iter()
           .filter(|&&lit| lit != o_lit)
@@ -170,9 +148,8 @@ impl WatchList {
     causes: &Vec<Option<ClauseRef>>,
     levels: &Vec<Option<usize>>,
     cref: &ClauseRef,
-    db: &ClauseDatabase,
   ) -> Option<Literal> {
-    let literals = &db.borrow_clause(&cref).literals;
+    let literals = &cref.literals;
     assert_ne!(0, literals.len(), "Empty clause transferred");
     if literals.len() == 1 {
       return match literals[0].assn(assns) {
@@ -180,7 +157,7 @@ impl WatchList {
         Some(true) => None,
       };
     }
-    if self.already_exists(cref, db) {
+    if self.already_exists(cref) {
       return None;
     }
     let (false_lits, other): (Vec<Literal>, Vec<_>) = literals
@@ -220,9 +197,8 @@ impl WatchList {
       },
     }
   }
-  fn already_exists(&self, cref: &ClauseRef, db: &ClauseDatabase) -> bool {
-    let existing = db
-      .borrow_clause(cref)
+  fn already_exists(&self, cref: &ClauseRef) -> bool {
+    let existing = cref
       .literals
       .iter()
       .find(|lit| self.occurrences[lit.raw() as usize].contains_key(cref));

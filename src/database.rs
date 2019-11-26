@@ -15,7 +15,7 @@ pub struct ClauseDatabase {
   // initial set of read only clauses.
   // They should only be simplified to be equivalent to
   // the original set of clauses given.
-  pub initial_clauses: Vec<Clause>,
+  pub initial_clauses: Vec<Arc<Clause>>,
 
   // any learnt clause, each one is likely to be added individually so it is more efficient to
   // store them each individually
@@ -30,7 +30,7 @@ impl ClauseDatabase {
     Self {
       curr_id: RwLock::new(0),
       max_var,
-      initial_clauses,
+      initial_clauses: initial_clauses.into_iter().map(|it| Arc::new(it)).collect(),
       learnt_clauses,
     }
   }
@@ -40,6 +40,11 @@ impl ClauseDatabase {
     learnt_clauses.push(c);
     learnt_clauses.len()
   }
+  pub fn add_learnts(&self, id: usize, c: &mut Vec<Weak<Clause>>) -> usize {
+    let mut learnt_clauses = self.learnt_clauses[id].write().unwrap();
+    learnt_clauses.append(c);
+    learnt_clauses.len()
+  }
   /// returns the number of solvers expected for this database
   pub fn num_solvers(&self) -> usize { self.learnt_clauses.len() }
   pub fn next_id(&self) -> usize {
@@ -47,17 +52,12 @@ impl ClauseDatabase {
     *id += 1;
     *id - 1
   }
-  pub fn borrow_clause<'a>(&'a self, cref: &'a ClauseRef) -> &'a Clause {
-    match cref {
-      ClauseRef::Initial(i) => &self.initial_clauses[*i],
-      ClauseRef::Learnt(arc) => arc.deref(),
-    }
-  }
+  pub fn borrow_clause<'a>(&'a self, cref: &'a ClauseRef) -> &'a Clause { cref.inner.deref() }
   // potentially expensive as it clones all the references to the learnt clauses at the same
   // time
-  pub fn iter(&self) -> impl Iterator<Item = ClauseRef> {
+  pub fn iter(&self) -> impl Iterator<Item = ClauseRef> + '_ {
     (0..self.initial_clauses.len())
-      .map(|idx| ClauseRef::Initial(idx))
+      .map(move |i| ClauseRef::from(self.initial_clauses[i].clone()))
       .chain(
         self
           .since(&vec![0; self.learnt_clauses.len()])
@@ -65,7 +65,7 @@ impl ClauseDatabase {
           .into_iter(),
       )
   }
-  pub fn initial(&self) -> &Vec<Clause> { &self.initial_clauses }
+  pub fn initial(&self) -> &Vec<Arc<Clause>> { &self.initial_clauses }
   pub fn since(&self, times: &Vec<usize>) -> (Vec<ClauseRef>, Vec<usize>) {
     assert_eq!(self.learnt_clauses.len(), times.len());
     let mut out = vec![];
@@ -77,7 +77,7 @@ impl ClauseDatabase {
             .iter()
             .skip(times[i])
             .filter_map(Weak::upgrade)
-            .map(|r| ClauseRef::Learnt(r)),
+            .map(|r| ClauseRef::from(r)),
         );
         learnt_clauses.len()
       })
@@ -88,13 +88,16 @@ impl ClauseDatabase {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum ClauseRef {
-  // Learnt clauses are just atomically referenced pointers
-  Learnt(Arc<Clause>),
-  // Since initial is readonly, it's safe to store a usize
-  Initial(usize),
+pub struct ClauseRef {
+  inner: Arc<Clause>,
+  // TODO add cached hash here
+}
+
+impl Deref for ClauseRef {
+  type Target = Clause;
+  fn deref(&self) -> &Self::Target { &*self.inner }
 }
 
 impl From<Arc<Clause>> for ClauseRef {
-  fn from(clause: Arc<Clause>) -> Self { ClauseRef::Learnt(clause) }
+  fn from(clause: Arc<Clause>) -> Self { ClauseRef { inner: clause } }
 }

@@ -1,3 +1,5 @@
+use std::cell::Cell;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Stats {
   restarts: u32,

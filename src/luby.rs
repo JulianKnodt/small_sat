@@ -37,12 +37,8 @@ impl RestartState {
       remaining: base * luby(inc, 0),
     }
   }
-  pub fn notify_conflict(&mut self) {
-    self.remaining = self.remaining.saturating_sub(1);
-  }
-  pub fn restart_suggested(&self) -> bool {
-    self.remaining == 0
-  }
+  pub fn notify_conflict(&mut self) { self.remaining = self.remaining.saturating_sub(1); }
+  pub fn restart_suggested(&self) -> bool { self.remaining == 0 }
   pub fn restart(&mut self) {
     self.num_restarts += 1;
     let new_remaining =
