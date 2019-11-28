@@ -46,6 +46,10 @@ impl From<i32> for Literal {
   }
 }
 
+impl From<u32> for Literal {
+  fn from(u: u32) -> Self { Literal(u) }
+}
+
 #[cfg(test)]
 mod test {
   use super::*;

@@ -4,6 +4,7 @@ use crate::{
 };
 
 use hashbrown::HashMap;
+use std::sync::Arc;
 
 /// An implementation of occurrence lists based on MiniSat's OccList
 #[derive(Clone, Debug, PartialEq)]
@@ -13,7 +14,7 @@ pub struct WatchList {
 }
 
 /// leaves enough space for both true and false variables up to max_var.
-fn space_for_all_lits(size: usize) -> usize { (size << 1) + 2 }
+fn space_for_all_lits(size: usize) -> usize { (size << 1) }
 
 impl WatchList {
   /// returns a new watchlist, as well as any unit clauses
@@ -224,5 +225,46 @@ impl WatchList {
       && self.occurrences[o_lit.raw() as usize]
         .insert(cref, lit)
         .is_none()
+  }
+
+  pub fn remove_satisfied(&mut self, assns: &Vec<Option<bool>>) {
+    self
+      .occurrences
+      .iter_mut()
+      .enumerate()
+      .for_each(|(lit, watches)| {
+        if Literal::from(lit as u32).assn(assns) == Some(true) {
+          watches.clear();
+        } else {
+          watches.retain(|_, other_lit| other_lit.assn(assns) != Some(true));
+        }
+      });
+  }
+  pub fn clean(&mut self, assns: &Vec<Option<bool>>, causes: &Vec<Option<ClauseRef>>) {
+    self
+      .occurrences
+      .iter_mut()
+      .enumerate()
+      .for_each(|(lit, watches)| {
+        let lit = Literal::from(lit as u32);
+        if let Some(true) = lit.assn(assns) {
+          // keep clauses which are at least binary
+          match causes[lit.var()].as_ref() {
+            None => watches.retain(|clause, _| clause.literals.len() <= 2),
+            Some(locked_clause) => watches.retain(|clause, _| {
+              clause.literals.len() <= 2 && !Arc::ptr_eq(&locked_clause.inner, &clause.inner)
+            }),
+          }
+          return;
+        }
+        watches.retain(|clause, other_lit| match other_lit.assn(assns) {
+          Some(true) => match causes[other_lit.var()].as_ref() {
+            None => clause.literals.len() <= 2,
+            Some(locked_clause) =>
+              clause.literals.len() <= 2 && !Arc::ptr_eq(&locked_clause.inner, &clause.inner),
+          },
+          _ => true,
+        });
+      });
   }
 }

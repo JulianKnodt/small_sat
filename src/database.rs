@@ -83,8 +83,7 @@ impl ClauseDatabase {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ClauseRef {
-  inner: Arc<Clause>,
-  // TODO add cached hash here
+  pub(crate) inner: Arc<Clause>,
 }
 
 impl Deref for ClauseRef {

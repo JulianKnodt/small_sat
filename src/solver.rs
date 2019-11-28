@@ -91,6 +91,11 @@ impl Solver {
         // handle transfers when there are no more conflicts in own clauses
         // but might need to handle conflicts here
         if conflict == None {
+          self
+            .stats
+            .record(Record::Written(to_write_buffer.len() as u32));
+          self.latest_clauses[self.id] = self.db.add_learnts(self.id, &mut to_write_buffer);
+          assert!(to_write_buffer.is_empty());
           let (new_clauses, new_timestamp) = self.db.since(&self.latest_clauses);
           self
             .stats
@@ -114,16 +119,15 @@ impl Solver {
           }
         }
       }
-      self
-        .stats
-        .record(Record::Written(to_write_buffer.len() as u32));
-      self.latest_clauses[self.id] = self.db.add_learnts(self.id, &mut to_write_buffer);
-      assert!(to_write_buffer.is_empty());
       if self.restart_state.restart_suggested() {
         self.stats.record(Record::Restart);
         self.restart_state.restart();
         self.backtrack_to(0);
       }
+      if self.level == 0 {
+        self.watch_list.remove_satisfied(&self.assignments);
+      }
+      // self.watch_list.clean(&self.assignments, &self.causes);
     }
     Some(self.final_assignments())
   }
@@ -320,6 +324,7 @@ impl Solver {
     replicas.push(self);
     Some(replicas)
   }
+  /// checks whether a literal in a conflict clause is redundant
   fn lit_redundant(
     &self,
     lit: Literal,
@@ -331,12 +336,18 @@ impl Solver {
     assert!(!failed.contains(&lit.var()));
     let mut remaining = vec![lit];
     while let Some(curr) = remaining.pop() {
-      let clause = self.reason(curr.var()).expect("Failed to find reason in lit_redundant");
+      let clause = self
+        .reason(curr.var())
+        .expect("Failed to find reason in lit_redundant");
       let lits = clause
         .literals
         .iter()
         // ignore asserting literals
-        .filter(|lit| self.reason(lit.var()) != Some(clause));
+        .filter(|lit| {
+          self
+            .reason(lit.var())
+            .map_or(false, |reason| Arc::ptr_eq(&reason.inner, &clause.inner))
+        });
       for lit in lits {
         let prev_removable = self.levels[lit.var()] == Some(0)
           || seen.contains(&lit.var())
@@ -345,11 +356,14 @@ impl Solver {
           continue;
         }
         if self.reason(lit.var()) == None || failed.contains(&lit.var()) {
-          remaining.into_iter().chain(std::iter::once(*lit)).for_each(|lit| {
-            if !seen.contains(&lit.var()) {
-              failed.insert(lit.var());
-            }
-          });
+          remaining
+            .into_iter()
+            .chain(std::iter::once(*lit))
+            .for_each(|lit| {
+              if !seen.contains(&lit.var()) {
+                failed.insert(lit.var());
+              }
+            });
           return false;
         }
         remaining.push(*lit);

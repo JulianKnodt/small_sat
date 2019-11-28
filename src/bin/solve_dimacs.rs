@@ -53,7 +53,7 @@ fn multi_threaded(s: &'_ str) {
     let sender = sender.clone();
     thread::spawn(move || {
       core_affinity::set_for_current(id);
-      println!("Starting {}", solver.id());
+      // println!("Starting {}", solver.id());
       // Safe to ignore error here because only care about first that finishes
       let result = solver.solve();
       println!("{:?}", solver.stats);

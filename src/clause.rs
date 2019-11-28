@@ -5,8 +5,6 @@ use std::fmt;
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Clause {
   pub(crate) literals: Vec<Literal>,
-  //  marked_for_deletion: bool,
-  learnt: bool,
 }
 
 impl Clause {
@@ -27,17 +25,13 @@ impl Clause {
       .iter()
       .any(|lit| final_assns[lit.var()] ^ lit.negated())
   }
-  pub fn mark_learnt(&mut self) { self.learnt = true; }
 }
 
 impl From<Vec<Literal>> for Clause {
   fn from(mut lits: Vec<Literal>) -> Self {
     lits.sort_unstable();
     lits.dedup();
-    Clause {
-      literals: lits,
-      learnt: false,
-    }
+    Clause { literals: lits }
   }
 }
 
