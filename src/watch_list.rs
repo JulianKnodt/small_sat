@@ -4,7 +4,6 @@ use crate::{
 };
 
 use hashbrown::HashMap;
-use std::sync::Arc;
 
 /// An implementation of occurrence lists based on MiniSat's OccList
 #[derive(Clone, Debug, PartialEq)]
@@ -240,6 +239,7 @@ impl WatchList {
         }
       });
   }
+  /// removes some old clauses from the databse
   pub fn clean(&mut self, assns: &Vec<Option<bool>>, causes: &Vec<Option<ClauseRef>>) {
     self
       .occurrences
@@ -247,23 +247,12 @@ impl WatchList {
       .enumerate()
       .for_each(|(lit, watches)| {
         let lit = Literal::from(lit as u32);
-        if let Some(true) = lit.assn(assns) {
-          // keep clauses which are at least binary
-          match causes[lit.var()].as_ref() {
-            None => watches.retain(|clause, _| clause.literals.len() <= 2),
-            Some(locked_clause) => watches.retain(|clause, _| {
-              clause.literals.len() <= 2 && !Arc::ptr_eq(&locked_clause.inner, &clause.inner)
-            }),
-          }
-          return;
-        }
-        watches.retain(|clause, other_lit| match other_lit.assn(assns) {
-          Some(true) => match causes[other_lit.var()].as_ref() {
-            None => clause.literals.len() <= 2,
-            Some(locked_clause) =>
-              clause.literals.len() <= 2 && !Arc::ptr_eq(&locked_clause.inner, &clause.inner),
-          },
-          _ => true,
+        // keep clauses which are at least binary
+        watches.retain(|clause, &mut o_lit| {
+          clause.literals.len() <= 2
+            || clause.initial
+            || clause.locked(lit, assns, causes)
+            || clause.locked(o_lit, assns, causes)
         });
       });
   }

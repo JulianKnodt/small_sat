@@ -5,6 +5,7 @@ use std::fmt;
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Clause {
   pub(crate) literals: Vec<Literal>,
+  pub(crate) initial: bool,
 }
 
 impl Clause {
@@ -31,7 +32,10 @@ impl From<Vec<Literal>> for Clause {
   fn from(mut lits: Vec<Literal>) -> Self {
     lits.sort_unstable();
     lits.dedup();
-    Clause { literals: lits }
+    Clause {
+      literals: lits,
+      initial: false,
+    }
   }
 }
 

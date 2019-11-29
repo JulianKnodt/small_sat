@@ -1,4 +1,4 @@
-use crate::clause::Clause;
+use crate::{clause::Clause, literal::Literal};
 use std::{
   ops::Deref,
   sync::{Arc, RwLock, Weak},
@@ -93,4 +93,19 @@ impl Deref for ClauseRef {
 
 impl From<Arc<Clause>> for ClauseRef {
   fn from(clause: Arc<Clause>) -> Self { ClauseRef { inner: clause } }
+}
+
+impl ClauseRef {
+  pub fn locked(
+    &self,
+    lit: Literal,
+    assns: &Vec<Option<bool>>,
+    causes: &Vec<Option<Self>>,
+  ) -> bool {
+    assert!(self.literals.binary_search(&lit).is_ok());
+    lit.assn(assns) == Some(true)
+      && causes[lit.var()]
+        .as_ref()
+        .map_or(false, |reason| Arc::ptr_eq(&reason.inner, &self.inner))
+  }
 }

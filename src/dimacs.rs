@@ -38,8 +38,9 @@ where
         })
         .for_each(|v| match v {
           0 => {
-            let complete_clause = mem::replace(&mut curr_lits, vec![]);
-            clauses.push(Clause::from(complete_clause));
+            let mut complete_clause = Clause::from(mem::replace(&mut curr_lits, vec![]));
+            complete_clause.initial = true;
+            clauses.push(complete_clause);
           },
           v => {
             let lit = Literal::from(v);
