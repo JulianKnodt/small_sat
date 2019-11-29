@@ -346,7 +346,7 @@ impl Solver {
         .filter(|lit| {
           self
             .reason(lit.var())
-            .map_or(false, |reason| Arc::ptr_eq(&reason.inner, &clause.inner))
+            .map_or(true, |reason| !Arc::ptr_eq(&reason.inner, &clause.inner))
         });
       for lit in lits {
         let prev_removable = self.levels[lit.var()] == Some(0)
