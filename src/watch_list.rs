@@ -33,7 +33,7 @@ impl WatchList {
   fn watch(&mut self, cref: &ClauseRef) -> Option<Literal> {
     let lits = cref.literals.iter().take(2).collect::<Vec<_>>();
     match lits.len() {
-      0 => panic!("Empty clause passed to watch: {:?}", cref),
+      0 => panic!("Empty clause passed to watch"),
       1 => Some(*lits[0]),
       2 => {
         assert!(self.add_clause_with_lits(cref.clone(), *lits[0], *lits[1]));
@@ -58,8 +58,8 @@ impl WatchList {
         None => unassn.replace(*next),
       };
     }
-    let unassn = unassn.expect("Unexpected state, no unassigned lit in learnt clause");
-    let false_lit = false_lit.unwrap_or_else(|| panic!("No false lit in clause {:?}", cref));
+    let unassn = unassn.unwrap();
+    let false_lit = false_lit.unwrap();
     if !self.occurrences[unassn.raw() as usize].contains_key(&cref) {
       assert!(self.add_clause_with_lits(cref.clone(), false_lit, unassn));
     }
@@ -150,7 +150,7 @@ impl WatchList {
     cref: &ClauseRef,
   ) -> Option<Literal> {
     let literals = &cref.literals;
-    assert_ne!(0, literals.len(), "Empty clause transferred");
+    assert_ne!(0, literals.len());
     if literals.len() == 1 {
       return match literals[0].assn(assns) {
         Some(false) | None => Some(literals[0]),

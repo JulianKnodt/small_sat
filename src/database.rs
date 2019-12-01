@@ -22,6 +22,8 @@ pub struct ClauseDatabase {
 
   // TODO isolate this behind some nice APIs? Hard given the lock
   pub(crate) learnt_clauses: Vec<RwLock<Vec<Weak<Clause>>>>,
+
+  pub(crate) solution: RwLock<Option<Vec<bool>>>,
 }
 
 impl ClauseDatabase {
@@ -32,6 +34,7 @@ impl ClauseDatabase {
       max_var,
       initial_clauses: initial_clauses.into_iter().map(|it| Arc::new(it)).collect(),
       learnt_clauses,
+      solution: RwLock::new(None),
     }
   }
   /// adds a batch of learnt clauses to the database and returns the new timestamp of the

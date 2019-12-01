@@ -128,8 +128,15 @@ impl Solver {
         self.watch_list.remove_satisfied(&self.assignments);
       }
       // self.watch_list.clean(&self.assignments, &self.causes);
+
+      // short circuit if someone else succeeded
+      if let Some(solution) = &*self.db.solution.read().unwrap() {
+        return Some(solution.clone())
+      }
     }
-    Some(self.final_assignments())
+    let solution = self.final_assignments();
+    self.db.solution.write().unwrap().replace(solution.clone());
+    Some(solution)
   }
 
   /// gets the final assignments for this solver
@@ -183,7 +190,7 @@ impl Solver {
     while causes.1 > 0 {
       let conflict = causes
         .0
-        .unwrap_or_else(|| panic!("Internal error, got no reason for implication: {:?}", self));
+        .unwrap();
       causes = learn_until_uip(&conflict, causes.1, causes.2, Some(causes.3));
     }
     // minimization before adding asserting literal

@@ -3,6 +3,7 @@ extern crate priority_queue;
 use crate::{clause::Clause, database::ClauseDatabase};
 use hashbrown::HashMap;
 use priority_queue::PriorityQueue;
+use ahash::ABuildHasher;
 
 #[derive(PartialOrd, Debug, PartialEq, Clone, Copy)]
 struct Priority(f32);
@@ -11,17 +12,11 @@ impl Eq for Priority {}
 impl Ord for Priority {
   fn cmp(&self, o: &Self) -> std::cmp::Ordering { self.partial_cmp(o).unwrap() }
 }
-impl From<f32> for Priority {
-  fn from(v: f32) -> Self {
-    assert!(v.is_finite());
-    Priority(v)
-  }
-}
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct VariableState {
   // Variable -> activity
-  priorities: PriorityQueue<usize, Priority>,
+  priorities: PriorityQueue<usize, Priority, ABuildHasher>,
   /// buffer for assigned variables
   evicted: HashMap<usize, Priority>,
   /// constant rate of decay for this state
@@ -67,7 +62,6 @@ impl VariableState {
   /// Modifies the internal state so that the variable cannot be picked again
   /// Until it is re-enabled
   pub fn take_highest_prio(&mut self) -> usize {
-    // assert!(self.priorities.iter().any(|p| (p.1).0 > 0.0));
     let next = self.priorities.pop().unwrap();
     self.evicted.insert(next.0, next.1);
     next.0
@@ -76,12 +70,9 @@ impl VariableState {
 
 impl From<&'_ ClauseDatabase> for VariableState {
   fn from(db: &ClauseDatabase) -> Self {
-    use std::iter::repeat;
-    let items = repeat(Priority(0.0))
-      .take(db.max_var)
-      .enumerate()
-      .collect::<Vec<_>>();
-    let priorities = PriorityQueue::from(items);
+    let mut priorities = PriorityQueue::with_capacity_and_default_hasher(db.max_var);
+    priorities.extend((0..db.max_var)
+      .map(|var| (var, Priority(0.0))));
     let mut state = Self {
       priorities,
       evicted: HashMap::new(),
