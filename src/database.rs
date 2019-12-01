@@ -27,8 +27,11 @@ pub struct ClauseDatabase {
 }
 
 impl ClauseDatabase {
-  pub fn new(max_var: usize, initial_clauses: Vec<Clause>) -> Self {
+  pub fn new(max_var: usize, mut initial_clauses: Vec<Clause>) -> Self {
     let learnt_clauses = vec![RwLock::new(vec![])];
+    // Can't trust these darned CNF files
+    initial_clauses.sort_unstable();
+    initial_clauses.dedup();
     Self {
       curr_id: RwLock::new(0),
       max_var,
