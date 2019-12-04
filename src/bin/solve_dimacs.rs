@@ -19,9 +19,9 @@ fn main() {
   PROFILER.lock().unwrap().start("./solve.profile").unwrap();
   // specify how many cores to run this on
   for arg in env::args().skip(1).filter(|v| !v.starts_with("--")) {
-    // println!("Solving {}", arg);
-    // multi_threaded(&arg);
-    single_threaded(&arg);
+    println!("Solving {}", arg);
+    multi_threaded(&arg);
+    // single_threaded(&arg);
   }
   PROFILER.lock().unwrap().stop().unwrap();
 }
@@ -33,10 +33,10 @@ fn single_threaded(s: &'_ str) {
   // println!("{:?}", solver.stats);
   // println!("{:?}", solver.stats.start_time.elapsed());
   match result {
-    None => println!("UNSAT"),
+    None => println!("{} UNSAT", s),
     Some(sol) => {
       assert!(solver.db.initial_clauses.iter().all(|c| c.is_sat(&sol)));
-      println!("SAT");
+      println!("{} SAT", s);
     },
   };
 }

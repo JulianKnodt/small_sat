@@ -30,9 +30,10 @@ impl Clause {
 
 impl From<Vec<Literal>> for Clause {
   fn from(mut lits: Vec<Literal>) -> Self {
+    // is this necessary? maybe we can lazily handle this elsewhere?
     lits.sort_unstable();
     lits.dedup();
-    Clause {
+    Self {
       literals: lits,
       initial: false,
     }
