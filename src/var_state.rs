@@ -1,9 +1,9 @@
 extern crate priority_queue;
 
 use crate::{clause::Clause, database::ClauseDatabase};
+use ahash::ABuildHasher;
 use hashbrown::HashMap;
 use priority_queue::PriorityQueue;
-use ahash::ABuildHasher;
 
 #[derive(PartialOrd, Debug, PartialEq, Clone, Copy)]
 struct Priority(f32);
@@ -71,8 +71,7 @@ impl VariableState {
 impl From<&'_ ClauseDatabase> for VariableState {
   fn from(db: &ClauseDatabase) -> Self {
     let mut priorities = PriorityQueue::with_capacity_and_default_hasher(db.max_var);
-    priorities.extend((0..db.max_var)
-      .map(|var| (var, Priority(0.0))));
+    priorities.extend((0..db.max_var).map(|var| (var, Priority(0.0))));
     let mut state = Self {
       priorities,
       evicted: HashMap::new(),

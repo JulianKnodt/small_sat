@@ -1,9 +1,9 @@
 extern crate core_affinity;
 extern crate cpuprofiler;
 
+use cpuprofiler::PROFILER;
 use small_sat::{literal::Literal, solver::Solver};
 use std::{env, thread};
-use cpuprofiler::PROFILER;
 
 #[allow(dead_code)]
 fn output(assns: &Vec<bool>) -> String {
@@ -19,7 +19,6 @@ fn main() {
   PROFILER.lock().unwrap().start("./solve.profile").unwrap();
   // specify how many cores to run this on
   for arg in env::args().skip(1).filter(|v| !v.starts_with("--")) {
-    println!("Solving {}", arg);
     multi_threaded(&arg);
     // single_threaded(&arg);
   }
@@ -57,8 +56,7 @@ fn multi_threaded(s: &'_ str) {
     let mut solver = solvers.pop().unwrap();
     let sender = sender.clone();
     thread::spawn(move || {
-      core_affinity::set_for_current(id);
-      // println!("Starting {}", solver.id());
+      // core_affinity::set_for_current(id);
       // Safe to ignore error here because only care about first that finishes
       let result = solver.solve();
       // println!("{:?}", solver.stats);
@@ -68,10 +66,10 @@ fn multi_threaded(s: &'_ str) {
   });
 
   match receiver.recv().unwrap() {
-    None => println!("UNSAT"),
+    None => println!("{} UNSAT", s),
     Some(sol) => {
       assert!(initials.iter().all(|clause| clause.is_sat(&sol)));
-      println!("SAT");
+      println!("{} SAT", s);
     },
   };
   for _ in 1..num_cores {

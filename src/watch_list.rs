@@ -72,68 +72,55 @@ impl WatchList {
   }
   /// Sets a given literal to false in this watch list
   fn set_false(&mut self, lit: Literal, assns: &Vec<Option<bool>>) -> Vec<(ClauseRef, Literal)> {
-    let clauses = match self.occurrences.get_mut(lit.raw() as usize) {
-      // If there were no literals being watched for this, there must be no implications
-      None => return vec![],
-      Some(clauses) => clauses,
-    };
-
-    // TODO remove items from the list without draining
-    clauses
-      .drain()
-      .collect::<Vec<_>>()
-      .into_iter()
-      .filter_map(|(cref, o_lit)| {
-        // If the other one is set to true, we shouldn't update the watch list
-        if o_lit.assn(assns) == Some(true) {
-          //       if self.occurrences[o_lit.raw() as usize].get(&cref) == Some(&lit) {
-          assert_eq!(
-            self.occurrences[lit.raw() as usize].insert(cref.clone(), o_lit),
-            None
-          );
-          assert_eq!(self.occurrences[lit.raw() as usize][&cref], o_lit);
-          assert_eq!(self.occurrences[o_lit.raw() as usize][&cref], lit);
-          //    }
-          assert_ne!(o_lit, lit);
-          return None;
-        }
-        let literals = &cref.literals;
-        let next = literals
-          .iter()
-          .filter(|&&lit| lit != o_lit)
-          .find(|lit| lit.assn(assns) == Some(true))
-          .or_else(|| {
-            literals
-              .iter()
-              .filter(|&&lit| lit != o_lit)
-              .find(|lit| lit.assn(assns) == None)
-          });
-        match next {
-          // In the case of none, then it implies this is a unit clause,
-          // so return it and the literal that needs to be set in it.
-          None => {
-            // add it back because we need to keep two references in this watch list
-            self.occurrences[lit.raw() as usize].insert(cref.clone(), o_lit);
-            assert_eq!(self.occurrences[lit.raw() as usize][&cref], o_lit);
-            assert_eq!(self.occurrences[o_lit.raw() as usize][&cref], lit);
-            assert_ne!(o_lit, lit);
-            Some((cref, o_lit))
-          },
-          Some(&next) => {
-            assert_ne!(o_lit, next);
-            *self.occurrences[o_lit.raw() as usize]
-              .get_mut(&cref)
-              .unwrap() = next;
-            self.occurrences[next.raw() as usize].insert(cref.clone(), o_lit);
-            assert_eq!(self.occurrences[next.raw() as usize][&cref], o_lit);
-            assert_eq!(self.occurrences[o_lit.raw() as usize][&cref], next);
-            assert_ne!(o_lit, next);
-            assert!(next.assn(assns) != Some(false));
-            None
-          },
-        }
-      })
-      .collect()
+    use std::mem::swap;
+    assert!((lit.raw() as usize) < self.occurrences.len());
+    let mut swap_map = HashMap::new();
+    swap(&mut self.occurrences[lit.raw() as usize], &mut swap_map);
+    // removing items from the list without draining
+    // should help improve efficiency
+    let mut units = vec![];
+    swap_map.retain(|cref, &mut o_lit| {
+      assert_ne!(lit, o_lit);
+      // If the other one is set to true, we shouldn't update the watch list
+      if o_lit.assn(assns) == Some(true) {
+        debug_assert_eq!(self.occurrences[o_lit.raw() as usize][&cref], lit);
+        return true;
+      }
+      let literals = &cref.literals;
+      let next = literals
+        .iter()
+        .filter(|&&lit| lit != o_lit)
+        .find(|lit| lit.assn(assns) == Some(true))
+        .or_else(|| {
+          literals
+            .iter()
+            .filter(|&&lit| lit != o_lit)
+            .find(|lit| lit.assn(assns) == None)
+        });
+      match next {
+        // In the case of none, then it implies this is a unit clause,
+        // so return it and the literal that needs to be set in it.
+        None => {
+          debug_assert_eq!(self.occurrences[o_lit.raw() as usize][&cref], lit);
+          units.push((cref.clone(), o_lit));
+          true
+        },
+        Some(&next) => {
+          assert_ne!(lit, next);
+          assert_ne!(o_lit, next);
+          *self.occurrences[o_lit.raw() as usize]
+            .get_mut(&cref)
+            .unwrap() = next;
+          self.occurrences[next.raw() as usize].insert(cref.clone(), o_lit);
+          debug_assert_eq!(self.occurrences[next.raw() as usize][&cref], o_lit);
+          debug_assert_eq!(self.occurrences[o_lit.raw() as usize][&cref], next);
+          assert!(next.assn(assns) != Some(false));
+          false
+        },
+      }
+    });
+    swap(&mut self.occurrences[lit.raw() as usize], &mut swap_map);
+    units
   }
   /// Adds a transferred clause to this watchlist.
   /// If all literals are false
@@ -189,6 +176,8 @@ impl WatchList {
         if !self.occurrences[single.raw() as usize].contains_key(&cref) {
           assert!(self.add_clause_with_lits(cref.clone(), single, false_lits[0]));
         }
+        // If the one element is unassigned then return it, otherwise None
+        // It must either be Some(true) or None otherwise it would be in false lits.
         single.assn(assns).map_or(Some(single), |_| None)
       },
       _ => {
@@ -198,22 +187,11 @@ impl WatchList {
     }
   }
   fn already_exists(&self, cref: &ClauseRef) -> bool {
-    let existing = cref
+    cref
       .literals
       .iter()
-      .find(|lit| self.occurrences[lit.raw() as usize].contains_key(cref));
-    match existing {
-      None => false,
-      Some(lit) => {
-        let next = self.occurrences[lit.raw() as usize][&cref];
-        assert_eq!(
-          self.occurrences[next.raw() as usize][&cref],
-          *lit,
-          "Invariant broken"
-        );
-        true
-      },
-    }
+      .find(|lit| self.occurrences[lit.raw() as usize].contains_key(cref))
+      .is_some()
   }
   /// returns whether this seems to have violated an invariant or not
   #[must_use]
@@ -231,6 +209,7 @@ impl WatchList {
       .occurrences
       .iter_mut()
       .enumerate()
+      .filter(|(_, watches)| watches.len() > 0)
       .for_each(|(lit, watches)| {
         if Literal::from(lit as u32).assn(assns) == Some(true) {
           watches.clear();

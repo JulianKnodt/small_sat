@@ -16,5 +16,5 @@ cpuprofiler = "0.0.4"
 ahash = "0.2.18"
 
 [profile.release]
-# debug = true
-lto = true
+debug = true
+# lto = true

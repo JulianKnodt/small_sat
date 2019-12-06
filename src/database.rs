@@ -40,6 +40,10 @@ impl ClauseDatabase {
       solution: RwLock::new(None),
     }
   }
+  /// Adds a solution to this database
+  pub fn add_solution(&self, sol: Vec<bool>) {
+    self.solution.write().unwrap().replace(sol);
+  }
   /// adds a batch of learnt clauses to the database and returns the new timestamp of the
   /// process
   pub fn add_learnts(&self, id: usize, c: &mut Vec<Weak<Clause>>) -> usize {
@@ -108,6 +112,7 @@ impl ClauseRef {
     assns: &Vec<Option<bool>>,
     causes: &Vec<Option<Self>>,
   ) -> bool {
+    // check that this clause has this lit
     assert!(self.literals.binary_search(&lit).is_ok());
     lit.assn(assns) == Some(true)
       && causes[lit.var()]

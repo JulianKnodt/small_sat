@@ -87,6 +87,10 @@ impl Solver {
         // assign resulting literal with the learnt clause as the cause
         conflict = self.with(lit, Some(cref));
         assert_eq!(self.assignments[lit.var()], Some(lit.val()));
+        if let Some(sol) = self.short_circuit() {
+          return Some(sol);
+        }
+
 
         // handle transfers when there are no more conflicts in own clauses
         // but might need to handle conflicts here
@@ -102,6 +106,7 @@ impl Solver {
             .record(Record::Transferred(new_clauses.len() as u32));
           self.latest_clauses = new_timestamp;
           unsolved_buffer.extend(new_clauses);
+          // TODO need to make it so that can add more than one transfer at the same time?
           while let Some(transfer) = unsolved_buffer.pop() {
             let transfer_outcome = self.watch_list.add_transfer(
               &self.assignments,
@@ -128,30 +133,30 @@ impl Solver {
         self.watch_list.remove_satisfied(&self.assignments);
       }
       // self.watch_list.clean(&self.assignments, &self.causes);
-
-      // short circuit if someone else succeeded
-      if let Some(solution) = &*self.db.solution.read().unwrap() {
-        return Some(solution.clone())
-      }
     }
     let solution = self.final_assignments();
-    self.db.solution.write().unwrap().replace(solution.clone());
+    self.db.add_solution(solution.clone());
     Some(solution)
   }
 
   /// gets the final assignments for this solver
-  /// panicks if one is still null
+  /// panics if one is still null
   pub fn final_assignments(&self) -> Vec<bool> {
     self.assignments.iter().map(|&i| i.unwrap()).collect()
+  }
+  /// returns if another solver found a solution
+  pub fn short_circuit(&self) -> Option<Vec<bool>> {
+    self.db.solution.read().unwrap().as_ref().map(|sol| sol.clone())
   }
   /// returns whether there are still unassigned variables for
   /// this solver.
   pub fn has_unassigned_vars(&self) -> bool { self.assignment_trail.len() < self.assignments.len() }
-  pub fn assigned_vars(&self) -> usize { self.assignment_trail.len() }
+  /// returns the reason for a var's assignment if it exists
   pub fn reason(&self, var: usize) -> Option<&ClauseRef> { self.causes[var].as_ref() }
   /// Analyzes a conflict for a given variable
-  pub fn analyze(&mut self, src_clause: &ClauseRef, decision_level: usize) -> (Clause, usize) {
+  fn analyze(&mut self, src_clause: &ClauseRef, decision_level: usize) -> (Clause, usize) {
     let mut learnt: Vec<Literal> = vec![];
+    // TODO convert seen, removable, to reused vectors?
     let mut seen: HashSet<usize> = HashSet::new();
     let curr_len = self.assignment_trail.len() - 1;
     let mut learn_until_uip =
@@ -188,9 +193,7 @@ impl Solver {
       };
     let mut causes = learn_until_uip(src_clause, 0, curr_len, None);
     while causes.1 > 0 {
-      let conflict = causes
-        .0
-        .unwrap();
+      let conflict = causes.0.unwrap();
       causes = learn_until_uip(&conflict, causes.1, causes.2, Some(causes.3));
     }
     // minimization before adding asserting literal
@@ -211,18 +214,17 @@ impl Solver {
       // backtrack to 0
       return (Clause::from(learnt), 0);
     }
-    // TODO possibly optimize for single pass?
-    let mut levels: Vec<_> = learnt
-      .iter()
-      .filter_map(|lit| self.levels[lit.var()])
-      .collect();
-    levels.sort_unstable();
-    levels.dedup();
-    let max = levels.pop().unwrap();
-    match levels.pop() {
-      None => (Clause::from(learnt), max),
-      Some(level) => (Clause::from(learnt), level),
-    }
+    let mut levels = learnt.iter().filter_map(|lit| self.levels[lit.var()]);
+    let curr_max = levels.next().unwrap();
+    let (max, second) = levels.fold((curr_max, None), |(max, second), next| {
+      use std::cmp::Ordering;
+      match next.cmp(&max) {
+        Ordering::Greater => (next, Some(max)),
+        Ordering::Equal => (max, second),
+        Ordering::Less => (max, second.filter(|&v| v >= next).or(Some(next))),
+      }
+    });
+    (Clause::from(learnt), second.unwrap_or(max))
   }
   pub fn next_level(&mut self) -> usize {
     self.level += 1;
@@ -231,17 +233,19 @@ impl Solver {
   /// revert to given level, retaining all state at that level.
   fn backtrack_to(&mut self, lvl: usize) {
     self.level = lvl;
-    for var in 0..self.levels.len() {
-      if self.levels[var].map_or(false, |assn_lvl| assn_lvl > lvl) {
+    let count = self.assignment_trail.iter().rev()
+      .take_while(|lit| self.levels[lit.var()].expect("no level?") > lvl)
+      .count();
+    self.assignment_trail.split_off(self.assignment_trail.len() - count)
+      .drain(..)
+      .for_each(|lit| {
+        let var = lit.var();
         assert_ne!(self.assignments[var].take(), None);
         assert_ne!(self.levels[var].take(), None);
-        let trail = self.assignment_trail.pop().unwrap();
-        self.polarities[trail.var()] = trail.val();
-        // cannot assert that every variable has a cause, might've decided it
+        self.polarities[var] = lit.val();
         self.causes[var].take();
         self.var_state.enable(var);
-      }
-    }
+      });
   }
   /// simplifies the current set of clauses for this solver
   pub fn simplify() { unimplemented!() }
@@ -279,7 +283,7 @@ impl Solver {
       match lit.assn(&self.assignments) {
         Some(true) => continue,
         None => (),
-        Some(false) => return Some(cause.expect("No cause for assigned")),
+        Some(false) => return Some(cause.unwrap()),
       }
       self.assignment_trail.push(lit);
       if let Some(cause) = cause {
@@ -301,14 +305,13 @@ impl Solver {
   /// Chooese the next decision literal.
   /// Must take a mutable reference because it must modify the heap of assignments
   fn choose_lit(&mut self) -> Literal {
+    assert!(self.has_unassigned_vars());
     let var = loop {
       let next = self.var_state.take_highest_prio();
       if self.assignments[next].is_none() {
         break next;
       }
     };
-    assert_eq!(self.assignments[var], None);
-    // naive strategy of picking first unassigned one
     Literal::new(var as u32, !self.polarities[var])
   }
 
@@ -345,7 +348,8 @@ impl Solver {
     while let Some(curr) = remaining.pop() {
       let clause = self
         .reason(curr.var())
-        .expect("Failed to find reason in lit_redundant");
+        // Failed to find reason in lit_redundant
+        .unwrap();
       let lits = clause
         .literals
         .iter()
