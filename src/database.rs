@@ -1,7 +1,8 @@
 use crate::{clause::Clause, literal::Literal};
 use std::{
   ops::Deref,
-  sync::{Arc, RwLock, Weak},
+  hash::{Hash, Hasher},
+  sync::{Arc, RwLock, Weak, atomic::{AtomicU64, Ordering}},
 };
 
 // maybe want some append only log?
@@ -22,6 +23,8 @@ pub struct ClauseDatabase {
 
   // TODO isolate this behind some nice APIs? Hard given the lock
   pub(crate) learnt_clauses: Vec<RwLock<Vec<Weak<Clause>>>>,
+
+  // TODO track median activity usage here?
 
   pub(crate) solution: RwLock<Option<Vec<bool>>>,
 }
@@ -89,9 +92,10 @@ impl ClauseDatabase {
   pub fn resize_to(&mut self, n: usize) { self.learnt_clauses.resize_with(n, Default::default); }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone)]
 pub struct ClauseRef {
   pub(crate) inner: Arc<Clause>,
+  pub(crate) activity: Arc<AtomicU64>,
 }
 
 impl Deref for ClauseRef {
@@ -100,7 +104,26 @@ impl Deref for ClauseRef {
 }
 
 impl From<Arc<Clause>> for ClauseRef {
-  fn from(clause: Arc<Clause>) -> Self { ClauseRef { inner: clause } }
+  fn from(clause: Arc<Clause>) -> Self {
+    Self {
+      inner: clause,
+      // Everything starts with an activity of one when created
+      activity: Arc::new(AtomicU64::new(1)),
+    }
+  }
+}
+
+impl PartialEq for ClauseRef {
+  fn eq(&self, o: &Self) -> bool {
+    self.inner == o.inner
+  }
+}
+impl Eq for ClauseRef {}
+
+impl Hash for ClauseRef {
+  fn hash<H: Hasher>(&self, state: &mut H) {
+    self.inner.hash(state)
+  }
 }
 
 impl ClauseRef {
@@ -117,4 +140,8 @@ impl ClauseRef {
         .as_ref()
         .map_or(false, |reason| Arc::ptr_eq(&reason.inner, &self.inner))
   }
+  pub fn boost(&self) {
+    self.activity.fetch_add(1, Ordering::Relaxed);
+  }
+  pub fn curr_activity(&self) -> u64 { self.activity.load(Ordering::Relaxed) }
 }

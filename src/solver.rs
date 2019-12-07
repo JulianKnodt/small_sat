@@ -370,6 +370,7 @@ impl Solver {
           remaining
             .into_iter()
             .chain(std::iter::once(*lit))
+            .chain(std::iter::once(curr))
             .for_each(|lit| {
               if !seen.contains(&lit.var()) {
                 failed.insert(lit.var());
