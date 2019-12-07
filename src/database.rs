@@ -41,9 +41,7 @@ impl ClauseDatabase {
     }
   }
   /// Adds a solution to this database
-  pub fn add_solution(&self, sol: Vec<bool>) {
-    self.solution.write().unwrap().replace(sol);
-  }
+  pub fn add_solution(&self, sol: Vec<bool>) { self.solution.write().unwrap().replace(sol); }
   /// adds a batch of learnt clauses to the database and returns the new timestamp of the
   /// process
   pub fn add_learnts(&self, id: usize, c: &mut Vec<Weak<Clause>>) -> usize {

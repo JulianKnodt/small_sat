@@ -42,9 +42,14 @@ impl VariableState {
   /// Increases the activity for this variable
   pub fn increase_var_activity(&mut self, var: usize) {
     let inc_amt = self.inc_amt;
-    self
-      .priorities
-      .change_priority_by(&var, |p| Priority(p.0 + inc_amt.copysign(p.0)));
+    if let Some(prio) = self.evicted.get_mut(&var) {
+      assert!(prio.0.is_sign_positive());
+      prio.0 += inc_amt
+    } else {
+      self
+        .priorities
+        .change_priority_by(&var, |p| Priority(p.0 + inc_amt));
+    }
   }
   /// Adds a clause to this variable state cache
   pub fn add_clause(&mut self, c: &Clause) {
@@ -53,8 +58,7 @@ impl VariableState {
       .for_each(|lit| self.increase_var_activity(lit.var()));
   }
   pub fn enable(&mut self, var: usize) {
-    let prev = self.evicted.remove(&var);
-    if let Some(prev) = prev {
+    if let Some(prev) = self.evicted.remove(&var) {
       self.priorities.push(var, prev);
     }
   }
