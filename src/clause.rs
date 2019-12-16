@@ -3,7 +3,7 @@ use std::{
   fmt,
   hash::{Hash, Hasher},
   sync::{
-    atomic::{AtomicBool, AtomicU64, Ordering},
+    atomic::{AtomicU64, Ordering},
     Arc,
   },
 };
@@ -17,9 +17,6 @@ pub struct Clause {
   pub(crate) initial: bool,
   /// Clause activity, used for compaction
   pub(crate) activity: Arc<AtomicU64>,
-  /// Whether this clause was marked for deletion or not
-  // TODO need to actually use this
-  pub(crate) marked: AtomicBool,
 }
 
 impl PartialEq for Clause {
@@ -75,7 +72,6 @@ impl From<Vec<Literal>> for Clause {
       literals: lits,
       initial: false,
       activity: Arc::new(AtomicU64::new(0)),
-      marked: AtomicBool::new(false),
     }
   }
 }

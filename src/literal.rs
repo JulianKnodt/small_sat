@@ -30,21 +30,25 @@ impl Literal {
   /// Returns the raw internal of the literal
   // chose not to make this a usize because then it might take extra space on some machines
   // despite the fact that it's always a u32, even though it is only used as an index
+  #[inline]
   pub const fn raw(&self) -> u32 { self.0 }
 }
 
 impl Not for Literal {
   type Output = Literal;
+  #[inline]
   fn not(self) -> Self::Output { Literal(self.0 ^ 1) }
 }
 
 impl Not for &'_ Literal {
   type Output = Literal;
+  #[inline]
   fn not(self) -> Self::Output { Literal(self.0 ^ 1) }
 }
 
 // Reads a literal from dimacs format
 impl From<i32> for Literal {
+  #[inline]
   fn from(i: i32) -> Self {
     debug_assert_ne!(i, 0);
     Literal::new((i.abs() as u32) - 1, i < 0)
@@ -52,6 +56,7 @@ impl From<i32> for Literal {
 }
 
 impl From<u32> for Literal {
+  #[inline]
   fn from(u: u32) -> Self { Literal(u) }
 }
 

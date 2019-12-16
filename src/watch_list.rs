@@ -38,15 +38,16 @@ impl WatchList {
   /// Adds some clause from the given database to this list.
   /// It must not have previously been added to the list.
   fn watch(&mut self, cref: &ClauseRef) -> Option<Literal> {
-    let lits = cref.literals.iter().take(2).collect::<Vec<_>>();
-    match lits.len() {
-      0 => panic!("Empty clause passed to watch"),
-      1 => Some(*lits[0]),
-      2 => {
-        assert!(self.add_clause_with_lits(cref.clone(), *lits[0], *lits[1]));
-        None
+    let mut lits = cref.literals.iter().take(2);
+    match lits.next() {
+      None => panic!("Empty clause passed to watch"),
+      Some(&lit) => match lits.next() {
+        None => Some(lit),
+        Some(&o_lit) => {
+          assert!(self.add_clause_with_lits(cref.clone(), lit, o_lit));
+          None
+        },
       },
-      _ => unreachable!(),
     }
   }
   /// adds a learnt clause, which is assumed to have at least two literals as well as cause
@@ -101,9 +102,6 @@ impl WatchList {
     // removing items from the list without draining
     // should help improve efficiency
     swap_map.retain(|cref, &mut o_lit| {
-      if cref.marked.load(Ordering::Acquire) {
-        return false;
-      }
       assert_ne!(lit, o_lit);
       // If the other one is set to true, we shouldn't update the watch list
       if o_lit.assn(assns) == Some(true) {

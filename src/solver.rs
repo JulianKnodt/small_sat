@@ -88,9 +88,12 @@ impl Solver {
           self.db.add_solution(None);
           return None;
         }
+        if let Some(sol) = self.db.get_solution() {
+          return sol;
+        }
         self.stats.record(Record::LearnedClause);
         let (learnt_clause, backtrack_lvl) = self.analyze(&clause, self.level);
-        assert_ne!(backtrack_lvl, self.level);
+        assert!(backtrack_lvl < self.level);
         self.backtrack_to(backtrack_lvl);
         if learnt_clause.literals.len() == 0 {
           return None;
@@ -106,9 +109,6 @@ impl Solver {
         // assign resulting literal with the learnt clause as the cause
         conflict = self.with(lit, Some(cref));
         assert_eq!(self.assignments[lit.var()], Some(lit.val()));
-        if let Some(sol) = self.db.get_solution() {
-          return sol;
-        }
 
         // handle transfers when there are no more conflicts in own clauses
         // but might need to handle conflicts here
@@ -117,6 +117,7 @@ impl Solver {
             .stats
             .record(Record::Written(to_write_buffer.len() as u32));
           self.latest_clauses[self.id] = self.db.add_learnts(self.id, &mut to_write_buffer);
+          assert!(to_write_buffer.is_empty());
           let original_len = unsolved_buffer.len();
           self
             .db
@@ -154,7 +155,7 @@ impl Solver {
         self.watch_list.remove_satisfied(&self.assignments);
       }
       // compacting (currently leads to slow down so probably don't want to compact)
-      // self.db.compact();
+      self.db.compact(self.id);
       if self.stats.clauses_learned + self.stats.transferred_clauses > (max_learnts as usize) {
         self.watch_list.clean(&self.assignments, &self.causes);
         max_learnts *= LEARNTSIZE_INC;
@@ -188,28 +189,28 @@ impl Solver {
     let trail = &self.assignment_trail;
     let causes = &self.causes;
     let mut learn_until_uip =
-      |cref: &ClauseRef, remaining: u32, trail_idx: usize, previous_lit: Option<Literal>| {
+      |cref: &ClauseRef, remaining: usize, trail_idx: usize, previous_lit: Option<Literal>| {
         cref.boost();
-        let count: u32 = cref
+        let count: usize = cref
           .literals
           .iter()
           // only find new literals
           .filter(|&lit| previous_lit != Some(*lit))
-          .map(|lit| match &levels[lit.var()] {
-            Some(0) => 0,
+          .filter(|&lit| match &levels[lit.var()] {
+            Some(0) => false,
             Some(lvl) if !seen.contains_key(&lit.var()) => {
               seen.insert(lit.var(), SeenState::Source);
               var_state.increase_var_activity(lit.var());
               if *lvl >= decision_level {
-                1
+                true
               } else {
                 learnt.push(*lit);
-                0
+                false
               }
             },
-            _ => 0,
+            _ => false,
           })
-          .sum();
+          .count();
         let mut idx = trail_idx;
         while !seen.contains_key(&trail[idx].var()) && idx > 0 {
           idx = idx - 1;
@@ -219,7 +220,7 @@ impl Solver {
         assert!(seen.remove(&lit_on_path.var()).is_some());
         let conflict = causes[lit_on_path.var()].as_ref();
         // self.reason(lit_on_path.var());
-        let next_remaining: u32 = (remaining + count).saturating_sub(1);
+        let next_remaining: usize = (remaining + count).saturating_sub(1);
         (conflict, next_remaining, idx.saturating_sub(1), lit_on_path)
       };
     let mut causes = learn_until_uip(src_clause, 0, curr_len, None);
@@ -255,7 +256,9 @@ impl Solver {
   }
   /// revert to given level, retaining all state at that level.
   fn backtrack_to(&mut self, lvl: usize) {
-    if lvl >= self.level { return }
+    if lvl >= self.level {
+      return;
+    }
     self.level = lvl;
     let index = self.level_indeces[lvl];
     drop(self.level_indeces.drain(lvl..));
@@ -296,7 +299,7 @@ impl Solver {
       analyze_seen: RefCell::new(HashMap::new()),
     };
     for (cause, lit) in units {
-      assert_eq!(solver.with(lit, Some(cause)), None, "UNSAT");
+      assert_eq!(solver.with(lit, Some(cause.clone())), None, "UNSAT");
     }
     Ok(solver)
   }
