@@ -1,7 +1,5 @@
 extern crate core_affinity;
-extern crate cpuprofiler;
 
-use cpuprofiler::PROFILER;
 use small_sat::{literal::Literal, solver::Solver};
 use std::{env, thread, time::Instant};
 
@@ -17,7 +15,6 @@ fn output(assns: &Vec<bool>) -> String {
 
 fn main() {
   // specify how many cores to run this on
-  PROFILER.lock().unwrap().start("solve.profile");
   let start = Instant::now();
   for arg in env::args().skip(1).filter(|v| !v.starts_with("--")) {
     println!("Starting {:?}", arg);
@@ -25,7 +22,6 @@ fn main() {
     // single_threaded(&arg);
   }
   println!("Total elapsed for all: {:?}", start.elapsed());
-  PROFILER.lock().unwrap().stop();
 }
 
 #[allow(dead_code)]
