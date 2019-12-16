@@ -1,15 +1,48 @@
 use crate::literal::Literal;
-use std::fmt;
+use std::{
+  fmt,
+  hash::{Hash, Hasher},
+  sync::{
+    atomic::{AtomicBool, AtomicU64, Ordering},
+    Arc,
+  },
+};
 
 /// A CNF clause, where each of the literals is some variable in the entire expression
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug)]
 pub struct Clause {
+  /// Literals for this clause
   pub(crate) literals: Vec<Literal>,
+  /// True iff this clause was from the initial set of clauses
   pub(crate) initial: bool,
+  /// Clause activity, used for compaction
+  pub(crate) activity: Arc<AtomicU64>,
+  /// Whether this clause was marked for deletion or not
+  // TODO need to actually use this
+  pub(crate) marked: AtomicBool,
+}
+
+impl PartialEq for Clause {
+  fn eq(&self, o: &Self) -> bool { self.literals == o.literals }
+}
+impl Eq for Clause {}
+impl PartialOrd for Clause {
+  fn partial_cmp(&self, o: &Self) -> Option<std::cmp::Ordering> {
+    self.literals.partial_cmp(&o.literals)
+  }
+}
+impl Ord for Clause {
+  fn cmp(&self, o: &Self) -> std::cmp::Ordering { self.partial_cmp(&o).unwrap() }
+}
+
+impl Hash for Clause {
+  fn hash<H: Hasher>(&self, state: &mut H) { self.literals.hash(state) }
 }
 
 impl Clause {
+  /// returns true if this clause has no literals.
   pub fn is_empty(&self) -> bool { self.literals.is_empty() }
+  /// Returns true if this clause contains both a literal and its negation.
   pub fn is_tautology(&self) -> bool {
     let mut seen: Vec<&Literal> = Vec::with_capacity(self.literals.len());
     self.literals.iter().any(|lit| {
@@ -20,12 +53,17 @@ impl Clause {
       false
     })
   }
+  /// returns true if any literal is true based on the assignment vector
   pub fn is_sat(&self, final_assns: &Vec<bool>) -> bool {
     self
       .literals
       .iter()
       .any(|lit| final_assns[lit.var()] ^ lit.negated())
   }
+  /// Increases the ordering of this clause
+  pub fn boost(&self) { self.activity.fetch_add(1, Ordering::SeqCst); }
+  /// SeqCst Atomic load of the activity for this clause
+  pub fn curr_activity(&self) -> u64 { self.activity.load(Ordering::SeqCst) }
 }
 
 impl From<Vec<Literal>> for Clause {
@@ -36,6 +74,8 @@ impl From<Vec<Literal>> for Clause {
     Self {
       literals: lits,
       initial: false,
+      activity: Arc::new(AtomicU64::new(0)),
+      marked: AtomicBool::new(false),
     }
   }
 }

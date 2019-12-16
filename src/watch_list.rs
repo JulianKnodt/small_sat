@@ -2,17 +2,23 @@ use crate::{
   database::{ClauseDatabase, ClauseRef},
   literal::Literal,
 };
-
 use hashbrown::HashMap;
+use std::sync::{
+  atomic::{AtomicU64, Ordering},
+  Arc, Weak,
+};
 
 /// An implementation of occurrence lists based on MiniSat's OccList
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 pub struct WatchList {
   // raw literal ->  Vec(Clause being watched, other literal being watched in clause)
   occurrences: Vec<HashMap<ClauseRef, Literal>>,
+  // activities for the clauses in this watchlist
+  activities: Vec<Weak<AtomicU64>>,
 }
 
 /// leaves enough space for both true and false variables up to max_var.
+#[inline]
 fn space_for_all_lits(size: usize) -> usize { (size << 1) }
 
 impl WatchList {
@@ -21,6 +27,7 @@ impl WatchList {
   pub fn new(db: &ClauseDatabase) -> (Self, Vec<(ClauseRef, Literal)>) {
     let mut wl = Self {
       occurrences: vec![HashMap::new(); space_for_all_lits(db.max_var)],
+      activities: vec![],
     };
     let units = db
       .iter()
@@ -48,38 +55,55 @@ impl WatchList {
     if cref.literals.len() == 1 {
       return cref.literals[0];
     }
-    let mut false_lit = None;
-    let mut unassn = None;
-    for next in &cref.literals {
-      match next.assn(assns) {
-        Some(true) => panic!("Unexpected state, found true assignment"),
-        Some(false) => false_lit.replace(*next),
-        None if unassn.is_some() => panic!("Unexpected state multiple unassigned literals"),
-        None => unassn.replace(*next),
-      };
-    }
-    let unassn = unassn.unwrap();
-    let false_lit = false_lit.unwrap();
+    self.activities.push(Arc::downgrade(&cref.activity));
+    debug_assert!(!cref
+      .literals
+      .iter()
+      .any(|lit| lit.assn(assns) == Some(true)));
+    debug_assert_eq!(
+      1,
+      cref
+        .literals
+        .iter()
+        .filter(|lit| lit.assn(assns).is_none())
+        .count()
+    );
+    let false_lit = *cref
+      .literals
+      .iter()
+      .find(|lit| lit.assn(&assns) == Some(false))
+      .unwrap();
+    let unassn = *cref
+      .literals
+      .iter()
+      .find(|lit| lit.assn(&assns).is_none())
+      .unwrap();
     if !self.occurrences[unassn.raw() as usize].contains_key(&cref) {
       assert!(self.add_clause_with_lits(cref.clone(), false_lit, unassn));
     }
     unassn
   }
-  pub fn set(&mut self, lit: Literal, assns: &Vec<Option<bool>>) -> Vec<(ClauseRef, Literal)> {
+  pub fn set<T>(&mut self, lit: Literal, assns: &Vec<Option<bool>>, into: &mut T)
+  where
+    T: Extend<(ClauseRef, Literal)>, {
     // Sanity check that we actually assigned this variable
     assert_eq!(lit.assn(assns), Some(true));
-    self.set_false(!lit, assns)
+    self.set_false(!lit, assns, into)
   }
   /// Sets a given literal to false in this watch list
-  fn set_false(&mut self, lit: Literal, assns: &Vec<Option<bool>>) -> Vec<(ClauseRef, Literal)> {
+  fn set_false<T>(&mut self, lit: Literal, assns: &Vec<Option<bool>>, into: &mut T)
+  where
+    T: Extend<(ClauseRef, Literal)>, {
     use std::mem::swap;
     assert!((lit.raw() as usize) < self.occurrences.len());
     let mut swap_map = HashMap::new();
     swap(&mut self.occurrences[lit.raw() as usize], &mut swap_map);
     // removing items from the list without draining
     // should help improve efficiency
-    let mut units = vec![];
     swap_map.retain(|cref, &mut o_lit| {
+      if cref.marked.load(Ordering::Acquire) {
+        return false;
+      }
       assert_ne!(lit, o_lit);
       // If the other one is set to true, we shouldn't update the watch list
       if o_lit.assn(assns) == Some(true) {
@@ -102,7 +126,7 @@ impl WatchList {
         // so return it and the literal that needs to be set in it.
         None => {
           debug_assert_eq!(self.occurrences[o_lit.raw() as usize][&cref], lit);
-          units.push((cref.clone(), o_lit));
+          into.extend(std::iter::once((cref.clone(), o_lit)));
           true
         },
         Some(&next) => {
@@ -120,7 +144,6 @@ impl WatchList {
       }
     });
     swap(&mut self.occurrences[lit.raw() as usize], &mut swap_map);
-    units
   }
   /// Adds a transferred clause to this watchlist.
   /// If all literals are false
@@ -147,42 +170,45 @@ impl WatchList {
     if self.already_exists(cref) {
       return None;
     }
-    let (false_lits, other): (Vec<Literal>, Vec<_>) = literals
+    self.activities.push(Arc::downgrade(&cref.activity));
+    // Only need to track at most 4 literals
+    let mut watchable = literals
       .iter()
-      .partition(|lit| lit.assn(assns) == Some(false));
-    match other.len() {
-      0 => {
-        let to_backtrack = *false_lits
+      .filter(|lit| lit.assn(&assns) != Some(false));
+    match watchable.next() {
+      None => {
+        let to_backtrack = *literals
           .iter()
           .filter(|lit| causes[lit.var()].is_some())
           .max_by_key(|lit| levels[lit.var()])
-          .unwrap_or_else(|| {
-            false_lits
-              .iter()
-              .max_by_key(|lit| levels[lit.var()])
-              .unwrap()
-          });
-        let other_false = false_lits
+          .unwrap_or_else(|| literals.iter().max_by_key(|lit| levels[lit.var()]).unwrap());
+        let other_false = *literals
           .into_iter()
-          .filter(|&lit| lit != to_backtrack)
+          .filter(|&&lit| lit != to_backtrack)
           .next()
-          .expect("Other lit must exist");
+          // other list must exist
+          .unwrap();
         assert_ne!(to_backtrack, other_false);
         assert!(self.add_clause_with_lits(cref.clone(), to_backtrack, other_false));
         Some(to_backtrack)
       },
-      1 => {
-        let single = other[0];
-        if !self.occurrences[single.raw() as usize].contains_key(&cref) {
-          assert!(self.add_clause_with_lits(cref.clone(), single, false_lits[0]));
-        }
-        // If the one element is unassigned then return it, otherwise None
-        // It must either be Some(true) or None otherwise it would be in false lits.
-        single.assn(assns).map_or(Some(single), |_| None)
-      },
-      _ => {
-        assert!(self.add_clause_with_lits(cref.clone(), other[0], other[1]));
-        None
+      Some(&lit) => match watchable.next() {
+        None => {
+          if !self.occurrences[lit.raw() as usize].contains_key(&cref) {
+            let other = *literals
+              .iter()
+              .find(|lit| lit.assn(&assns) == Some(false))
+              .unwrap();
+            assert!(self.add_clause_with_lits(cref.clone(), lit, other));
+          }
+          // If the one element is unassigned then return it, otherwise None
+          // It must either be Some(true) or None otherwise it would be in false lits.
+          lit.assn(assns).map_or(Some(lit), |_| None)
+        },
+        Some(&o_lit) => {
+          assert!(self.add_clause_with_lits(cref.clone(), lit, o_lit));
+          None
+        },
       },
     }
   }
@@ -193,7 +219,9 @@ impl WatchList {
       .find(|lit| self.occurrences[lit.raw() as usize].contains_key(cref))
       .is_some()
   }
-  /// returns whether this seems to have violated an invariant or not
+  /// Adds a clause with the given literals into the watch list.
+  /// Returns true if another clause was evicted, which likely implies an invariant
+  /// was broken.
   #[must_use]
   fn add_clause_with_lits(&mut self, cref: ClauseRef, lit: Literal, o_lit: Literal) -> bool {
     self.occurrences[lit.raw() as usize]
@@ -205,6 +233,7 @@ impl WatchList {
   }
 
   pub fn remove_satisfied(&mut self, assns: &Vec<Option<bool>>) {
+    // TODO could I swap the ordering here of which lit is being removed
     self
       .occurrences
       .iter_mut()
@@ -218,21 +247,53 @@ impl WatchList {
         }
       });
   }
+  /// returns the median activity for this watchlist
+  fn median_activity(&mut self) -> Option<u64> {
+    let median_position = self.activities.len() / 2;
+    self
+      .activities
+      .partition_at_index_by_key(median_position, |act| {
+        act.upgrade().map_or(0, |act| act.load(Ordering::SeqCst))
+      })
+      .1
+      .upgrade()
+      .map(|act| act.load(Ordering::SeqCst))
+  }
   /// removes some old clauses from the databse
   pub fn clean(&mut self, assns: &Vec<Option<bool>>, causes: &Vec<Option<ClauseRef>>) {
+    if self.activities.is_empty() {
+      return;
+    }
+    let threshold = match self.median_activity() {
+      None => return,
+      Some(med) => med,
+    };
+    let curr: HashMap<ClauseRef, u64> = self
+      .occurrences
+      .iter_mut()
+      .flat_map(|watch| {
+        watch
+          .keys()
+          .map(|cref| (cref.clone(), cref.curr_activity()))
+      })
+      .collect();
     self
       .occurrences
       .iter_mut()
       .enumerate()
+      .filter(|(_, watches)| watches.len() > 0)
       .for_each(|(lit, watches)| {
         let lit = Literal::from(lit as u32);
-        // keep clauses which are at least binary
-        watches.retain(|clause, &mut o_lit| {
-          clause.literals.len() <= 2
-            || clause.initial
-            || clause.locked(lit, assns, causes)
-            || clause.locked(o_lit, assns, causes)
+        // Threshold is the median of all clause activities for this watch list
+        watches.retain(|cref, &mut o_lit| {
+          cref.literals.len() <= 2
+            || cref.initial
+            || curr[cref] >= threshold
+            || cref.locked(lit, assns, causes)
+            || cref.locked(o_lit, assns, causes)
         });
       });
+    drop(curr);
+    self.activities.retain(|act| act.strong_count() > 0);
   }
 }

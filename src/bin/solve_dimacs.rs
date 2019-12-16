@@ -3,7 +3,7 @@ extern crate cpuprofiler;
 
 use cpuprofiler::PROFILER;
 use small_sat::{literal::Literal, solver::Solver};
-use std::{env, thread};
+use std::{env, thread, time::Instant};
 
 #[allow(dead_code)]
 fn output(assns: &Vec<bool>) -> String {
@@ -16,13 +16,14 @@ fn output(assns: &Vec<bool>) -> String {
 }
 
 fn main() {
-  PROFILER.lock().unwrap().start("./solve.profile").unwrap();
   // specify how many cores to run this on
+  let start = Instant::now();
   for arg in env::args().skip(1).filter(|v| !v.starts_with("--")) {
+    println!("Starting {:?}", arg);
     multi_threaded(&arg);
     // single_threaded(&arg);
   }
-  PROFILER.lock().unwrap().stop().unwrap();
+  println!("Total elapsed for all: {:?}", start.elapsed());
 }
 
 #[allow(dead_code)]
@@ -56,7 +57,7 @@ fn multi_threaded(s: &'_ str) {
     let mut solver = solvers.pop().unwrap();
     let sender = sender.clone();
     thread::spawn(move || {
-      // core_affinity::set_for_current(id);
+      core_affinity::set_for_current(id);
       // Safe to ignore error here because only care about first that finishes
       let result = solver.solve();
       // println!("{:?}", solver.stats);

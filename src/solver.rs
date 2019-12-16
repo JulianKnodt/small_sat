@@ -7,11 +7,13 @@ use crate::{
   var_state::VariableState,
   watch_list::WatchList,
 };
-use hashbrown::HashSet;
-use std::sync::Arc;
+use hashbrown::HashMap;
+use std::{cell::RefCell, sync::Arc};
 
 pub const RESTART_BASE: u64 = 100;
 pub const RESTART_INC: u64 = 2;
+pub const LEARNTSIZE_FACTOR: f64 = 1.0 / 3.0;
+pub const LEARNTSIZE_INC: f64 = 1.3;
 
 #[derive(Clone, Debug)]
 pub struct Solver {
@@ -49,10 +51,22 @@ pub struct Solver {
 
   /// which level is this solver currently at
   level: usize,
-  // /// Statistics for this solver
+
+  /// Which index in the assignment trail was a variable assigned at
+  level_indeces: Vec<usize>,
+
   /// Restart State using Luby
   restart_state: RestartState,
 
+  // a reusable stack from lit redundant
+  // should be clear before and after each call to lit redundant
+  analyze_stack: RefCell<Vec<Literal>>,
+
+  // a reusable tracker for what was seen and what was not
+  // should be clear before and after each call to analyze
+  analyze_seen: RefCell<HashMap<usize, SeenState>>,
+
+  /// Statistics for this solver
   pub stats: Stats,
 }
 
@@ -62,6 +76,7 @@ impl Solver {
     assert_eq!(self.level, 0);
     let mut unsolved_buffer = vec![];
     let mut to_write_buffer = vec![];
+    let mut max_learnts = (self.db.initial().len() as f64) * LEARNTSIZE_FACTOR;
 
     while self.has_unassigned_vars() {
       self.next_level();
@@ -78,9 +93,11 @@ impl Solver {
         if learnt_clause.literals.len() == 0 {
           return None;
         }
-        let cref = Arc::new(learnt_clause);
-        to_write_buffer.push(Arc::downgrade(&cref));
-        let cref = ClauseRef::from(cref);
+        self
+          .stats
+          .record(Record::LearntLiterals(learnt_clause.literals.len()));
+        let cref = ClauseRef::from(learnt_clause);
+        to_write_buffer.push(cref.clone());
         let lit = self.watch_list.add_learnt(&self.assignments, &cref);
 
         self.var_state.decay();
@@ -91,7 +108,6 @@ impl Solver {
           return Some(sol);
         }
 
-
         // handle transfers when there are no more conflicts in own clauses
         // but might need to handle conflicts here
         if conflict == None {
@@ -99,13 +115,13 @@ impl Solver {
             .stats
             .record(Record::Written(to_write_buffer.len() as u32));
           self.latest_clauses[self.id] = self.db.add_learnts(self.id, &mut to_write_buffer);
-          assert!(to_write_buffer.is_empty());
-          let (new_clauses, new_timestamp) = self.db.since(&self.latest_clauses);
+          let original_len = unsolved_buffer.len();
+          self
+            .db
+            .since(&mut unsolved_buffer, &mut self.latest_clauses);
           self
             .stats
-            .record(Record::Transferred(new_clauses.len() as u32));
-          self.latest_clauses = new_timestamp;
-          unsolved_buffer.extend(new_clauses);
+            .record(Record::Transferred(unsolved_buffer.len() - original_len));
           // TODO need to make it so that can add more than one transfer at the same time?
           while let Some(transfer) = unsolved_buffer.pop() {
             let transfer_outcome = self.watch_list.add_transfer(
@@ -132,21 +148,35 @@ impl Solver {
       if self.level == 0 {
         self.watch_list.remove_satisfied(&self.assignments);
       }
-      // self.watch_list.clean(&self.assignments, &self.causes);
+      // compacting (currently leads to slow down so probably don't want to compact)
+      // self.db.compact();
+      /*
+      if self.stats.clauses_learned + self.stats.transferred_clauses > (max_learnts as usize) {
+        self.watch_list.clean(&self.assignments, &self.causes);
+        max_learnts *= LEARNTSIZE_INC;
+      }
+      */
     }
     let solution = self.final_assignments();
     self.db.add_solution(solution.clone());
+    self.stats.rate(std::time::Duration::from_secs(1));
     Some(solution)
   }
 
   /// gets the final assignments for this solver
-  /// panics if one is still null
+  /// panics if any variable is still null.
   pub fn final_assignments(&self) -> Vec<bool> {
     self.assignments.iter().map(|&i| i.unwrap()).collect()
   }
   /// returns if another solver found a solution
   pub fn short_circuit(&self) -> Option<Vec<bool>> {
-    self.db.solution.read().unwrap().as_ref().map(|sol| sol.clone())
+    self
+      .db
+      .solution
+      .read()
+      .unwrap()
+      .as_ref()
+      .map(|sol| sol.clone())
   }
   /// returns whether there are still unassigned variables for
   /// this solver.
@@ -157,19 +187,26 @@ impl Solver {
   fn analyze(&mut self, src_clause: &ClauseRef, decision_level: usize) -> (Clause, usize) {
     let mut learnt: Vec<Literal> = vec![];
     // TODO convert seen, removable, to reused vectors?
-    let mut seen: HashSet<usize> = HashSet::new();
+    // let mut seen: HashSet<usize> = HashSet::new();
+    let mut seen = self.analyze_seen.borrow_mut();
     let curr_len = self.assignment_trail.len() - 1;
+    let var_state = &mut self.var_state;
+    let levels = &self.levels;
+    let trail = &self.assignment_trail;
+    let causes = &self.causes;
     let mut learn_until_uip =
       |cref: &ClauseRef, remaining: u32, trail_idx: usize, previous_lit: Option<Literal>| {
+        cref.boost();
         let count: u32 = cref
           .literals
           .iter()
           // only find new literals
           .filter(|&lit| previous_lit != Some(*lit))
-          .map(|lit| match &self.levels[lit.var()] {
+          .map(|lit| match &levels[lit.var()] {
             Some(0) => 0,
-            Some(lvl) if !seen.contains(&lit.var()) => {
-              seen.insert(lit.var());
+            Some(lvl) if !seen.contains_key(&lit.var()) => {
+              seen.insert(lit.var(), SeenState::Source);
+              var_state.increase_var_activity(lit.var());
               if *lvl >= decision_level {
                 1
               } else {
@@ -181,13 +218,14 @@ impl Solver {
           })
           .sum();
         let mut idx = trail_idx;
-        while !seen.contains(&self.assignment_trail[idx].var()) && idx > 0 {
+        while !seen.contains_key(&trail[idx].var()) && idx > 0 {
           idx = idx - 1;
         }
-        let lit_on_path = self.assignment_trail[idx];
+        let lit_on_path = trail[idx];
         // should have previously seen this assignment
-        assert!(seen.remove(&lit_on_path.var()));
-        let conflict = self.reason(lit_on_path.var());
+        assert!(seen.remove(&lit_on_path.var()).is_some());
+        let conflict = causes[lit_on_path.var()].as_ref();
+        // self.reason(lit_on_path.var());
         let next_remaining: u32 = (remaining + count).saturating_sub(1);
         (conflict, next_remaining, idx.saturating_sub(1), lit_on_path)
       };
@@ -197,19 +235,10 @@ impl Solver {
       causes = learn_until_uip(&conflict, causes.1, causes.2, Some(causes.3));
     }
     // minimization before adding asserting literal
-    let mut removable = HashSet::new();
-    let mut failed = HashSet::new();
-    learnt.retain(|lit| {
-      self.causes[lit.var()].is_none()
-        || !self.lit_redundant(*lit, &mut seen, &mut removable, &mut failed)
-    });
+    learnt.retain(|lit| self.causes[lit.var()].is_none() || !self.lit_redundant(*lit, &mut seen));
     // add asserting literal
     learnt.push(!causes.3);
-    seen
-      .drain()
-      .chain(removable.drain())
-      .chain(failed.drain())
-      .for_each(|var| self.var_state.increase_var_activity(var));
+    seen.clear();
     if learnt.len() == 1 {
       // backtrack to 0
       return (Clause::from(learnt), 0);
@@ -227,25 +256,25 @@ impl Solver {
     (Clause::from(learnt), second.unwrap_or(max))
   }
   pub fn next_level(&mut self) -> usize {
+    self.level_indeces.push(self.assignment_trail.len());
     self.level += 1;
     self.level
   }
   /// revert to given level, retaining all state at that level.
   fn backtrack_to(&mut self, lvl: usize) {
+    if lvl >= self.level { return }
     self.level = lvl;
-    let count = self.assignment_trail.iter().rev()
-      .take_while(|lit| self.levels[lit.var()].expect("no level?") > lvl)
-      .count();
-    self.assignment_trail.split_off(self.assignment_trail.len() - count)
-      .drain(..)
-      .for_each(|lit| {
-        let var = lit.var();
-        assert_ne!(self.assignments[var].take(), None);
-        assert_ne!(self.levels[var].take(), None);
-        self.polarities[var] = lit.val();
-        self.causes[var].take();
-        self.var_state.enable(var);
-      });
+    let index = self.level_indeces[lvl];
+    drop(self.level_indeces.drain(lvl..));
+    for lit in self.assignment_trail.drain(index..) {
+      let var = lit.var();
+      assert_ne!(self.assignments[var].take(), None);
+      assert_ne!(self.levels[var].take(), None);
+      self.polarities[var] = lit.val();
+      self.causes[var].take();
+      self.var_state.enable(var);
+    }
+    assert_eq!(self.level_indeces.len(), lvl);
   }
   /// simplifies the current set of clauses for this solver
   pub fn simplify() { unimplemented!() }
@@ -260,15 +289,18 @@ impl Solver {
       assignments: vec![None; max_var],
       causes: vec![None; max_var],
       assignment_trail: vec![],
+      level_indeces: vec![],
       levels: vec![None; max_var],
       watch_list: wl,
       polarities: vec![false; max_var],
       var_state,
-      latest_clauses: vec![0; db.learnt_clauses.len()],
+      latest_clauses: vec![0; db.num_solvers()],
       db: Arc::new(db),
       level: 0,
       restart_state: RestartState::new(RESTART_BASE, RESTART_INC),
       stats: Stats::new(),
+      analyze_stack: RefCell::new(vec![]),
+      analyze_seen: RefCell::new(HashMap::new()),
     };
     for (cause, lit) in units {
       assert_eq!(solver.with(lit, Some(cause)), None, "UNSAT");
@@ -278,27 +310,31 @@ impl Solver {
   /// Records a literal written at the current level, with a possible cause
   // TODO possibly convert this into two parts which have and don't have causes.
   fn with(&mut self, lit: Literal, cause: Option<ClauseRef>) -> Option<ClauseRef> {
-    let mut units = vec![(cause, lit)];
+    let mut units = match cause {
+      // In the case there was no previous cause, we need to do one iteration
+      None => {
+        let mut units = vec![];
+        assert!(lit.assn(&self.assignments).is_none());
+        self.assignment_trail.push(lit);
+        assert_eq!(self.levels[lit.var()].replace(self.level), None);
+        assert_eq!(self.assignments[lit.var()].replace(lit.val()), None);
+        self.watch_list.set(lit, &self.assignments, &mut units);
+        units
+      },
+      Some(cause) => vec![(cause, lit)],
+    };
     while let Some((cause, lit)) = units.pop() {
       match lit.assn(&self.assignments) {
         Some(true) => continue,
         None => (),
-        Some(false) => return Some(cause.unwrap()),
+        Some(false) => return Some(cause),
       }
       self.assignment_trail.push(lit);
-      if let Some(cause) = cause {
-        self.stats.record(Record::Propogation);
-        assert_eq!(self.causes[lit.var()].replace(cause), None);
-      }
+      self.stats.record(Record::Propogation);
+      assert_eq!(self.causes[lit.var()].replace(cause), None);
       assert_eq!(self.levels[lit.var()].replace(self.level), None);
       assert_eq!(self.assignments[lit.var()].replace(lit.val()), None);
-      let new_units = self
-        .watch_list
-        .set(lit, &mut self.assignments)
-        .into_iter()
-        .map(|(cause, lit)| (Some(cause), lit));
-      // does order matter here? dunno fuc it
-      units.extend(new_units);
+      self.watch_list.set(lit, &self.assignments, &mut units)
     }
     None
   }
@@ -327,29 +363,21 @@ impl Solver {
   /// Replicates this one solver into multiple with the same state.
   /// Returns none if replicate was called before.
   pub fn replicate(mut self, n: usize) -> Option<Vec<Self>> {
-    self.latest_clauses = vec![0; n];
     let db = Arc::get_mut(&mut self.db)?;
+    self.latest_clauses = vec![0; n];
     db.resize_to(n);
     let mut replicas = (0..n - 1).map(|_| self.duplicate()).collect::<Vec<_>>();
     replicas.push(self);
     Some(replicas)
   }
   /// checks whether a literal in a conflict clause is redundant
-  fn lit_redundant(
-    &self,
-    lit: Literal,
-    seen: &HashSet<usize>,
-    removable: &mut HashSet<usize>,
-    failed: &mut HashSet<usize>,
-  ) -> bool {
-    assert!(!removable.contains(&lit.var()));
-    assert!(!failed.contains(&lit.var()));
-    let mut remaining = vec![lit];
+  fn lit_redundant(&self, lit: Literal, seen: &mut HashMap<usize, SeenState>) -> bool {
+    assert!(!seen.contains_key(&lit.var()) ^ (seen[&lit.var()] == SeenState::Source));
+    let mut remaining = self.analyze_stack.borrow_mut();
+    assert!(remaining.is_empty());
+    remaining.push(lit);
     while let Some(curr) = remaining.pop() {
-      let clause = self
-        .reason(curr.var())
-        // Failed to find reason in lit_redundant
-        .unwrap();
+      let clause = self.reason(curr.var()).unwrap();
       let lits = clause
         .literals
         .iter()
@@ -361,29 +389,37 @@ impl Solver {
         });
       for lit in lits {
         let prev_removable = self.levels[lit.var()] == Some(0)
-          || seen.contains(&lit.var())
-          || removable.contains(&lit.var());
+          || seen.get(&lit.var()).map_or(false, |&ss| {
+            ss == SeenState::Source || ss == SeenState::Redundant
+          });
         if prev_removable {
           continue;
         }
-        if self.reason(lit.var()) == None || failed.contains(&lit.var()) {
+        if self.reason(lit.var()) == None
+          || seen
+            .get(&lit.var())
+            .map_or(false, |&ss| ss == SeenState::Required)
+        {
           remaining
-            .into_iter()
+            .drain(..)
             .chain(std::iter::once(*lit))
             .chain(std::iter::once(curr))
             .for_each(|lit| {
-              if !seen.contains(&lit.var()) {
-                failed.insert(lit.var());
-              }
+              seen.entry(lit.var()).or_insert(SeenState::Required);
             });
           return false;
         }
         remaining.push(*lit);
       }
-      if !seen.contains(&lit.var()) {
-        removable.insert(lit.var());
-      }
+      seen.entry(lit.var()).or_insert(SeenState::Redundant);
     }
     true
   }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum SeenState {
+  Source,
+  Redundant,
+  Required,
 }
