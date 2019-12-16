@@ -30,8 +30,10 @@ pub struct ClauseDatabase {
   // .2 is the number deleted
   learnt_clauses: Vec<RwLock<(usize, Vec<Weak<Clause>>, usize)>>,
 
-  // TODO track median activity usage here?
-  pub(crate) solution: RwLock<Option<Vec<bool>>>,
+  /// A short circuited solution
+  /// Is a nested option to indicate no solution found or
+  /// there is no solution.
+  pub(crate) solution: RwLock<Option<Option<Vec<bool>>>>,
 
   activities: RwLock<Vec<Weak<AtomicU64>>>,
 }
@@ -52,7 +54,15 @@ impl ClauseDatabase {
     }
   }
   /// Adds a solution to this database
-  pub fn add_solution(&self, sol: Vec<bool>) { self.solution.write().unwrap().replace(sol); }
+  pub fn add_solution(&self, sol: Option<Vec<bool>>) { self.solution.write().unwrap().replace(sol); }
+  pub fn get_solution(&self) -> Option<Option<Vec<bool>>> {
+    self
+      .solution
+      .read()
+      .unwrap()
+      .as_ref()
+      .map(|sol| sol.clone())
+  }
   /// adds a batch of learnt clauses to the database and returns the new timestamp of the
   /// process
   pub fn add_learnts(&self, id: usize, c: &mut Vec<ClauseRef>) -> usize {

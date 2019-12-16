@@ -85,10 +85,12 @@ impl Solver {
       while let Some(clause) = conflict {
         self.restart_state.notify_conflict();
         if self.level == 0 {
+          self.db.add_solution(None);
           return None;
         }
         self.stats.record(Record::LearnedClause);
         let (learnt_clause, backtrack_lvl) = self.analyze(&clause, self.level);
+        assert_ne!(backtrack_lvl, self.level);
         self.backtrack_to(backtrack_lvl);
         if learnt_clause.literals.len() == 0 {
           return None;
@@ -104,8 +106,8 @@ impl Solver {
         // assign resulting literal with the learnt clause as the cause
         conflict = self.with(lit, Some(cref));
         assert_eq!(self.assignments[lit.var()], Some(lit.val()));
-        if let Some(sol) = self.short_circuit() {
-          return Some(sol);
+        if let Some(sol) = self.db.get_solution() {
+          return sol;
         }
 
         // handle transfers when there are no more conflicts in own clauses
@@ -124,6 +126,9 @@ impl Solver {
             .record(Record::Transferred(unsolved_buffer.len() - original_len));
           // TODO need to make it so that can add more than one transfer at the same time?
           while let Some(transfer) = unsolved_buffer.pop() {
+            if let Some(sol) = self.db.get_solution() {
+              return sol;
+            }
             let transfer_outcome = self.watch_list.add_transfer(
               &self.assignments,
               &self.causes,
@@ -150,15 +155,13 @@ impl Solver {
       }
       // compacting (currently leads to slow down so probably don't want to compact)
       // self.db.compact();
-      /*
       if self.stats.clauses_learned + self.stats.transferred_clauses > (max_learnts as usize) {
         self.watch_list.clean(&self.assignments, &self.causes);
         max_learnts *= LEARNTSIZE_INC;
       }
-      */
     }
     let solution = self.final_assignments();
-    self.db.add_solution(solution.clone());
+    self.db.add_solution(Some(solution.clone()));
     self.stats.rate(std::time::Duration::from_secs(1));
     Some(solution)
   }
@@ -167,16 +170,6 @@ impl Solver {
   /// panics if any variable is still null.
   pub fn final_assignments(&self) -> Vec<bool> {
     self.assignments.iter().map(|&i| i.unwrap()).collect()
-  }
-  /// returns if another solver found a solution
-  pub fn short_circuit(&self) -> Option<Vec<bool>> {
-    self
-      .db
-      .solution
-      .read()
-      .unwrap()
-      .as_ref()
-      .map(|sol| sol.clone())
   }
   /// returns whether there are still unassigned variables for
   /// this solver.
