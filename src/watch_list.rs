@@ -188,19 +188,20 @@ impl WatchList {
           .filter(|lit| causes[lit.var()].is_some())
           .max_by_key(|lit| levels[lit.var()])
           .unwrap_or_else(|| literals.iter().max_by_key(|lit| levels[lit.var()]).unwrap());
-        let other_false = *literals
+        let other_false = match literals
           .iter()
-          .find(|&&lit| lit != to_backtrack)
-          // other list must exist
-          .unwrap();
+          .filter(|&&lit| levels[lit.var()] < levels[to_backtrack.var()])
+          .find(|&&lit| lit != to_backtrack) {
+          None => return None,
+          Some(&lit) => lit,
+        };
         assert_ne!(to_backtrack, other_false);
         assert!(self.add_clause_with_lits(cref.clone(), to_backtrack, other_false));
         Some(to_backtrack)
       },
       Some(&lit) => match watchable.next() {
         None => match lit.assn(assns) {
-          // Don't track literals which are true as well
-          // might mess with modifying it to add it in
+          // Don't track clauses which have a true literal
           Some(true) => None,
           Some(false) => unreachable!(),
           None => {
@@ -215,7 +216,7 @@ impl WatchList {
           }
         },
         Some(&o_lit) => {
-          // assert!(self.add_clause_with_lits(cref.clone(), lit, o_lit));
+          assert!(self.add_clause_with_lits(cref.clone(), lit, o_lit));
           None
         },
       },
@@ -249,9 +250,9 @@ impl WatchList {
       .filter(|(_, watches)| !watches.is_empty())
       .for_each(|(lit, watches)| {
         if Literal::from(lit as u32).assn(assns) == Some(true) {
-          watches.clear();
+          watches.retain(|cref, _| cref.initial);
         } else {
-          watches.retain(|_, other_lit| other_lit.assn(assns) != Some(true));
+          watches.retain(|cref, other_lit| cref.initial || other_lit.assn(assns) != Some(true));
         }
       });
   }

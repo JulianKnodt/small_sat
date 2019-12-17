@@ -38,27 +38,26 @@ fn multi_threaded(s: &'_ str) {
   let initials = solvers[0].db.initial_clauses.clone();
 
   let (sender, receiver) = channel();
-  let n = core_ids.into_iter().map(move |id| {
+  let children = core_ids.into_iter().map(move |id| {
     let mut solver = solvers.pop().unwrap();
     let sender = sender.clone();
     thread::spawn(move || {
       core_affinity::set_for_current(id);
       // Safe to ignore error here because only care about first that finishes
       let result = solver.solve();
+      solver.stats.rate(std::time::Duration::from_secs(1));
       let _ = sender.send(result);
-    });
-  }).count();
+    })
+  }).collect::<Vec<_>>();
+  for child in children {
+    child.join().unwrap()
+  }
 
-  match receiver.recv().unwrap() {
+  match receiver.recv().expect("FAILED?") {
     None => println!("{} UNSAT", s),
     Some(sol) => {
       assert!(initials.iter().all(|clause| clause.is_sat(&sol)));
       println!("{} SAT", s);
     },
   };
-  /*
-  for _ in 0..(n-1) {
-    receiver.recv().expect("Failed to receive");
-  }
-  */
 }

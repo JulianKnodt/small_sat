@@ -9,3 +9,4 @@ makefile
 .DS_Store
 *.profile
 *.svg
+test_sound.rb

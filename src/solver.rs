@@ -7,7 +7,7 @@ use crate::{
   var_state::VariableState,
   watch_list::WatchList,
 };
-use hashbrown::{HashMap, HashSet};
+use hashbrown::{HashMap};
 use std::{cell::RefCell, sync::Arc};
 
 pub const RESTART_BASE: u64 = 100;
@@ -229,7 +229,10 @@ impl Solver {
       causes = learn_until_uip(&conflict, causes.1, causes.2, Some(causes.3));
     }
     // minimization before adding asserting literal
+    /*
     learnt.retain(|lit| self.causes[lit.var()].is_none() || !self.lit_redundant(*lit, &mut seen));
+    */
+
     // add asserting literal
     learnt.push(!causes.3);
     seen.clear();
@@ -363,6 +366,10 @@ impl Solver {
     replicas.push(self);
     Some(replicas)
   }
+
+  /*
+  // TODO make this closer to minisat because it's a big source of
+  // inefficiency and also might be unsound
   /// checks whether a literal in a conflict clause is redundant
   fn lit_redundant(&self, lit: Literal, seen: &mut HashMap<usize, SeenState>) -> bool {
     assert!(!seen.contains_key(&lit.var()) ^ (seen[&lit.var()] == SeenState::Source));
@@ -409,14 +416,14 @@ impl Solver {
       }
       seen.entry(lit.var()).or_insert(SeenState::Redundant);
     }
-    prev.clear();
     true
   }
+  */
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum SeenState {
   Source,
-  Redundant,
-  Required,
+//  Redundant,
+//  Required,
 }
