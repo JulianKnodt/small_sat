@@ -1,17 +1,7 @@
 extern crate core_affinity;
 
-use small_sat::{literal::Literal, solver::Solver};
+use small_sat::solver::Solver;
 use std::{env, thread, time::Instant};
-
-#[allow(dead_code)]
-fn output(assns: &Vec<bool>) -> String {
-  assns
-    .iter()
-    .enumerate()
-    .map(|(i, &val)| format!("{}", Literal::new((i + 1) as u32, !val)))
-    .collect::<Vec<_>>()
-    .join(" & ")
-}
 
 fn main() {
   // specify how many cores to run this on
@@ -48,7 +38,7 @@ fn multi_threaded(s: &'_ str) {
   let initials = solvers[0].db.initial_clauses.clone();
 
   let (sender, receiver) = channel();
-  core_ids.into_iter().for_each(move |id| {
+  let n = core_ids.into_iter().map(move |id| {
     let mut solver = solvers.pop().unwrap();
     let sender = sender.clone();
     thread::spawn(move || {
@@ -57,7 +47,7 @@ fn multi_threaded(s: &'_ str) {
       let result = solver.solve();
       let _ = sender.send(result);
     });
-  });
+  }).count();
 
   match receiver.recv().unwrap() {
     None => println!("{} UNSAT", s),
@@ -66,4 +56,7 @@ fn multi_threaded(s: &'_ str) {
       println!("{} SAT", s);
     },
   };
+  for _ in 0..(n-1) {
+    receiver.recv().expect("Failed to receive");
+  }
 }

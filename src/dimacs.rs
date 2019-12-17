@@ -18,7 +18,7 @@ where
   for line in buf_reader.lines() {
     let line = line?;
     let line = line.trim();
-    if line.starts_with("c") {
+    if line.starts_with('c') {
       continue;
     } // comments
     if line.starts_with("p cnf") {

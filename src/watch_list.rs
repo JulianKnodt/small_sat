@@ -52,7 +52,7 @@ impl WatchList {
   }
   /// adds a learnt clause, which is assumed to have at least two literals as well as cause
   /// and implication.
-  pub(crate) fn add_learnt(&mut self, assns: &Vec<Option<bool>>, cref: &ClauseRef) -> Literal {
+  pub(crate) fn add_learnt(&mut self, assns: &[Option<bool>], cref: &ClauseRef) -> Literal {
     if cref.literals.len() == 1 {
       return cref.literals[0];
     }
@@ -84,7 +84,7 @@ impl WatchList {
     }
     unassn
   }
-  pub fn set<T>(&mut self, lit: Literal, assns: &Vec<Option<bool>>, into: &mut T)
+  pub fn set<T>(&mut self, lit: Literal, assns: &[Option<bool>], into: &mut T)
   where
     T: Extend<(ClauseRef, Literal)>, {
     // Sanity check that we actually assigned this variable
@@ -92,7 +92,7 @@ impl WatchList {
     self.set_false(!lit, assns, into)
   }
   /// Sets a given literal to false in this watch list
-  fn set_false<T>(&mut self, lit: Literal, assns: &Vec<Option<bool>>, into: &mut T)
+  fn set_false<T>(&mut self, lit: Literal, assns: &[Option<bool>], into: &mut T)
   where
     T: Extend<(ClauseRef, Literal)>, {
     use std::mem::swap;
@@ -152,9 +152,9 @@ impl WatchList {
   /// Else watch unassigneds.
   pub fn add_transfer(
     &mut self,
-    assns: &Vec<Option<bool>>,
-    causes: &Vec<Option<ClauseRef>>,
-    levels: &Vec<Option<usize>>,
+    assns: &[Option<bool>],
+    causes: &[Option<ClauseRef>],
+    levels: &[Option<usize>],
     cref: &ClauseRef,
   ) -> Option<Literal> {
     let literals = &cref.literals;
@@ -181,9 +181,8 @@ impl WatchList {
           .max_by_key(|lit| levels[lit.var()])
           .unwrap_or_else(|| literals.iter().max_by_key(|lit| levels[lit.var()]).unwrap());
         let other_false = *literals
-          .into_iter()
-          .filter(|&&lit| lit != to_backtrack)
-          .next()
+          .iter()
+          .find(|&&lit| lit != to_backtrack)
           // other list must exist
           .unwrap();
         assert_ne!(to_backtrack, other_false);
@@ -214,8 +213,7 @@ impl WatchList {
     cref
       .literals
       .iter()
-      .find(|lit| self.occurrences[lit.raw() as usize].contains_key(cref))
-      .is_some()
+      .any(|lit| self.occurrences[lit.raw() as usize].contains_key(cref))
   }
   /// Adds a clause with the given literals into the watch list.
   /// Returns true if another clause was evicted, which likely implies an invariant
@@ -230,13 +228,13 @@ impl WatchList {
         .is_none()
   }
 
-  pub fn remove_satisfied(&mut self, assns: &Vec<Option<bool>>) {
+  pub fn remove_satisfied(&mut self, assns: &[Option<bool>]) {
     // TODO could I swap the ordering here of which lit is being removed
     self
       .occurrences
       .iter_mut()
       .enumerate()
-      .filter(|(_, watches)| watches.len() > 0)
+      .filter(|(_, watches)| !watches.is_empty())
       .for_each(|(lit, watches)| {
         if Literal::from(lit as u32).assn(assns) == Some(true) {
           watches.clear();
@@ -258,7 +256,7 @@ impl WatchList {
       .map(|act| act.load(Ordering::SeqCst))
   }
   /// removes some old clauses from the databse
-  pub fn clean(&mut self, assns: &Vec<Option<bool>>, causes: &Vec<Option<ClauseRef>>) {
+  pub fn clean(&mut self, assns: &[Option<bool>], causes: &[Option<ClauseRef>]) {
     if self.activities.is_empty() {
       return;
     }
@@ -279,7 +277,7 @@ impl WatchList {
       .occurrences
       .iter_mut()
       .enumerate()
-      .filter(|(_, watches)| watches.len() > 0)
+      .filter(|(_, watches)| !watches.is_empty())
       .for_each(|(lit, watches)| {
         let lit = Literal::from(lit as u32);
         // Threshold is the median of all clause activities for this watch list

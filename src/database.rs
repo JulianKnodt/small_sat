@@ -1,5 +1,6 @@
 use crate::{clause::Clause, literal::Literal};
 use std::{
+  hash::{Hash, Hasher},
   ops::Deref,
   sync::{Arc, RwLock, Weak},
 };
@@ -42,7 +43,7 @@ impl ClauseDatabase {
     Self {
       curr_id: RwLock::new(0),
       max_var,
-      initial_clauses: initial_clauses.into_iter().map(|it| Arc::new(it)).collect(),
+      initial_clauses: initial_clauses.into_iter().map(Arc::new).collect(),
       learnt_clauses,
       solution: RwLock::new(None),
     }
@@ -52,12 +53,7 @@ impl ClauseDatabase {
     self.solution.write().unwrap().replace(sol);
   }
   pub fn get_solution(&self) -> Option<Option<Vec<bool>>> {
-    self
-      .solution
-      .read()
-      .unwrap()
-      .as_ref()
-      .map(|sol| sol.clone())
+    self.solution.read().unwrap().as_ref().cloned()
   }
   /// adds a batch of learnt clauses to the database and returns the new timestamp of the
   /// process
@@ -92,7 +88,7 @@ impl ClauseDatabase {
     assert_eq!(self.learnt_clauses.len(), times.len());
     times.iter_mut().enumerate().for_each(|(i, written)| {
       match &self.learnt_clauses[i].try_read() {
-        Err(_) => return,
+        Err(_) => {},
         Ok(learnt_clauses) => {
           into.extend(
             learnt_clauses
@@ -109,7 +105,7 @@ impl ClauseDatabase {
   }
   pub fn compact(&self, id: usize) {
     match self.learnt_clauses[id].try_write() {
-      Err(_) => return,
+      Err(_) => {},
       Ok(mut learnt) => {
         let original = learnt.1.len();
         learnt.1.retain(|weak| weak.strong_count() > 0);
@@ -120,7 +116,7 @@ impl ClauseDatabase {
   pub fn resize_to(&mut self, n: usize) { self.learnt_clauses.resize_with(n, Default::default); }
 }
 
-#[derive(Debug, Clone, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialOrd, Ord)]
 pub struct ClauseRef {
   pub(crate) inner: Arc<Clause>,
 }
@@ -129,6 +125,9 @@ impl PartialEq for ClauseRef {
   fn eq(&self, o: &Self) -> bool { Arc::ptr_eq(&self.inner, &o.inner) }
 }
 impl Eq for ClauseRef {}
+impl Hash for ClauseRef {
+  fn hash<H: Hasher>(&self, state: &mut H) { self.inner.hash(state); }
+}
 
 impl Deref for ClauseRef {
   type Target = Clause;
@@ -144,12 +143,7 @@ impl From<Clause> for ClauseRef {
 }
 
 impl ClauseRef {
-  pub fn locked(
-    &self,
-    lit: Literal,
-    assns: &Vec<Option<bool>>,
-    causes: &Vec<Option<Self>>,
-  ) -> bool {
+  pub fn locked(&self, lit: Literal, assns: &[Option<bool>], causes: &[Option<Self>]) -> bool {
     // check that this clause has this lit
     debug_assert!(self.literals.binary_search(&lit).is_ok());
     lit.assn(assns) == Some(true)

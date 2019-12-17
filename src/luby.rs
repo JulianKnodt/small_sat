@@ -11,7 +11,7 @@ pub fn luby(mut x: u64, y: u64) -> u64 {
   while size - 1 != x {
     size = (size - 1) >> 1;
     seq -= 1;
-    x = x % size;
+    x %= size;
   }
   y.pow(seq)
 }

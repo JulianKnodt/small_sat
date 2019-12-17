@@ -95,7 +95,7 @@ impl Solver {
         let (learnt_clause, backtrack_lvl) = self.analyze(&clause, self.level);
         assert!(backtrack_lvl < self.level);
         self.backtrack_to(backtrack_lvl);
-        if learnt_clause.literals.len() == 0 {
+        if learnt_clause.is_empty() {
           return None;
         }
         self
@@ -213,7 +213,7 @@ impl Solver {
           .count();
         let mut idx = trail_idx;
         while !seen.contains_key(&trail[idx].var()) && idx > 0 {
-          idx = idx - 1;
+          idx -= 1;
         }
         let lit_on_path = trail[idx];
         // should have previously seen this assignment
@@ -272,8 +272,6 @@ impl Solver {
     }
     assert_eq!(self.level_indeces.len(), lvl);
   }
-  /// simplifies the current set of clauses for this solver
-  pub fn simplify() { unimplemented!() }
   pub fn from_dimacs<S: AsRef<std::path::Path>>(s: S) -> std::io::Result<Self> {
     use crate::dimacs::from_dimacs;
     let (clauses, max_var) = from_dimacs(s)?;
@@ -304,7 +302,6 @@ impl Solver {
     Ok(solver)
   }
   /// Records a literal written at the current level, with a possible cause
-  // TODO possibly convert this into two parts which have and don't have causes.
   fn with(&mut self, lit: Literal, cause: Option<ClauseRef>) -> Option<ClauseRef> {
     let mut units = match cause {
       // In the case there was no previous cause, we need to do one iteration

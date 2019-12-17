@@ -43,7 +43,7 @@ impl Clause {
   pub fn is_tautology(&self) -> bool {
     let mut seen: Vec<&Literal> = Vec::with_capacity(self.literals.len());
     self.literals.iter().any(|lit| {
-      if seen.iter().any(|prev| prev.is_negation(lit)) {
+      if seen.iter().any(|prev| prev.is_negation(*lit)) {
         return true;
       };
       seen.push(lit);
@@ -51,7 +51,7 @@ impl Clause {
     })
   }
   /// returns true if any literal is true based on the assignment vector
-  pub fn is_sat(&self, final_assns: &Vec<bool>) -> bool {
+  pub fn is_sat(&self, final_assns: &[bool]) -> bool {
     self
       .literals
       .iter()
@@ -94,7 +94,7 @@ mod test {
 impl fmt::Display for Clause {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     write!(f, "(")?;
-    if self.literals.len() > 0 {
+    if !self.literals.is_empty() {
       write!(f, "{}", self.literals[0])?;
       for lit in self.literals.iter().skip(1) {
         write!(f, " | {}", lit)?;

@@ -14,24 +14,24 @@ impl Literal {
   // Panics if this variable is not in the vector
   /// returns the value for this literal given these assignments
   #[inline]
-  pub fn assn(&self, assignments: &Vec<Option<bool>>) -> Option<bool> {
+  pub fn assn(self, assignments: &[Option<bool>]) -> Option<bool> {
     assignments[self.var()].map(|val| self.negated() ^ val)
   }
   /// Returns the variable for this literal as a usize
   /// for convenient indexing
   #[inline]
-  pub const fn var(&self) -> usize { (self.0 >> 1) as usize }
+  pub const fn var(self) -> usize { (self.0 >> 1) as usize }
   /// Returns what the var is assigned to if this lit is chosen.
   #[inline]
-  pub const fn val(&self) -> bool { (self.0 & 1) == 0 }
+  pub const fn val(self) -> bool { (self.0 & 1) == 0 }
   #[inline]
-  pub const fn negated(&self) -> bool { (self.0 & 1) == 1 }
-  pub const fn is_negation(&self, o: &Self) -> bool { (self.0 ^ 1) == o.0 }
+  pub const fn negated(self) -> bool { (self.0 & 1) == 1 }
+  pub const fn is_negation(self, o: Self) -> bool { (self.0 ^ 1) == o.0 }
   /// Returns the raw internal of the literal
   // chose not to make this a usize because then it might take extra space on some machines
   // despite the fact that it's always a u32, even though it is only used as an index
   #[inline]
-  pub const fn raw(&self) -> u32 { self.0 }
+  pub const fn raw(self) -> u32 { self.0 }
 }
 
 impl Not for Literal {
