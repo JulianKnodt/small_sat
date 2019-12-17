@@ -35,6 +35,14 @@ impl WatchList {
       .collect();
     (wl, units)
   }
+  /*
+  /// Returns the number of items in this watchlist
+  pub fn size(&self) -> usize {
+    self.occurrences.iter()
+      .map(|watches| watches.len())
+      .sum::<usize>()/2
+  }
+  */
   /// Adds some clause from the given database to this list.
   /// It must not have previously been added to the list.
   fn watch(&mut self, cref: &ClauseRef) -> Option<Literal> {
@@ -190,20 +198,24 @@ impl WatchList {
         Some(to_backtrack)
       },
       Some(&lit) => match watchable.next() {
-        None => {
-          if !self.occurrences[lit.raw() as usize].contains_key(&cref) {
-            let other = *literals
-              .iter()
-              .find(|lit| lit.assn(&assns) == Some(false))
-              .unwrap();
-            assert!(self.add_clause_with_lits(cref.clone(), lit, other));
+        None => match lit.assn(assns) {
+          // Don't track literals which are true as well
+          // might mess with modifying it to add it in
+          Some(true) => None,
+          Some(false) => unreachable!(),
+          None => {
+            if !self.occurrences[lit.raw() as usize].contains_key(&cref) {
+              let other = *literals
+                .iter()
+                .find(|lit| lit.assn(&assns) == Some(false))
+                .unwrap();
+              assert!(self.add_clause_with_lits(cref.clone(), lit, other));
+            }
+            Some(lit)
           }
-          // If the one element is unassigned then return it, otherwise None
-          // It must either be Some(true) or None otherwise it would be in false lits.
-          lit.assn(assns).map_or(Some(lit), |_| None)
         },
         Some(&o_lit) => {
-          assert!(self.add_clause_with_lits(cref.clone(), lit, o_lit));
+          // assert!(self.add_clause_with_lits(cref.clone(), lit, o_lit));
           None
         },
       },

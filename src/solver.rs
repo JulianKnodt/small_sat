@@ -7,7 +7,7 @@ use crate::{
   var_state::VariableState,
   watch_list::WatchList,
 };
-use hashbrown::HashMap;
+use hashbrown::{HashMap, HashSet};
 use std::{cell::RefCell, sync::Arc};
 
 pub const RESTART_BASE: u64 = 100;
@@ -368,6 +368,7 @@ impl Solver {
     assert!(!seen.contains_key(&lit.var()) ^ (seen[&lit.var()] == SeenState::Source));
     let mut remaining = self.analyze_stack.borrow_mut();
     assert!(remaining.is_empty());
+    let mut prev = HashSet::new();
     remaining.push(lit);
     while let Some(curr) = remaining.pop() {
       let clause = self.reason(curr.var()).unwrap();
@@ -382,6 +383,7 @@ impl Solver {
         });
       for lit in lits {
         let prev_removable = self.levels[lit.var()] == Some(0)
+          || prev.contains(&lit.var())
           || seen.get(&lit.var()).map_or(false, |&ss| {
             ss == SeenState::Source || ss == SeenState::Redundant
           });
@@ -403,9 +405,11 @@ impl Solver {
           return false;
         }
         remaining.push(*lit);
+        prev.insert(lit.var());
       }
       seen.entry(lit.var()).or_insert(SeenState::Redundant);
     }
+    prev.clear();
     true
   }
 }

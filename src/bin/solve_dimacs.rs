@@ -56,7 +56,9 @@ fn multi_threaded(s: &'_ str) {
       println!("{} SAT", s);
     },
   };
+  /*
   for _ in 0..(n-1) {
     receiver.recv().expect("Failed to receive");
   }
+  */
 }
