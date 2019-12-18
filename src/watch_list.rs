@@ -166,7 +166,7 @@ impl WatchList {
     cref: &ClauseRef,
   ) -> Option<Literal> {
     let literals = &cref.literals;
-    assert_ne!(0, literals.len());
+    assert!(!literals.is_empty());
     if literals.len() == 1 {
       return match literals[0].assn(assns) {
         Some(false) | None => Some(literals[0]),
@@ -183,19 +183,18 @@ impl WatchList {
       .filter(|lit| lit.assn(&assns) != Some(false));
     match watchable.next() {
       None => {
+        // this case can cause unsoundness on some rare occasions
         let to_backtrack = *literals
           .iter()
           .filter(|lit| causes[lit.var()].is_some())
-          .max_by_key(|lit| levels[lit.var()])
-          .unwrap_or_else(|| literals.iter().max_by_key(|lit| levels[lit.var()]).unwrap());
-        let other_false = match literals
+          .min_by_key(|lit| levels[lit.var()])
+          .unwrap_or_else(|| literals.iter().min_by_key(|lit| levels[lit.var()]).unwrap());
+        let other_false = *literals
           .iter()
-          .filter(|&&lit| levels[lit.var()] < levels[to_backtrack.var()])
-          .find(|&&lit| lit != to_backtrack) {
-          None => return None,
-          Some(&lit) => lit,
-        };
-        assert_ne!(to_backtrack, other_false);
+          .filter(|lit| levels[lit.var()].unwrap() < levels[to_backtrack.var()].unwrap())
+          .find(|&&lit| lit != to_backtrack)?;
+        debug_assert_ne!(to_backtrack, other_false);
+        debug_assert!(levels[to_backtrack.var()] > levels[other_false.var()]);
         assert!(self.add_clause_with_lits(cref.clone(), to_backtrack, other_false));
         Some(to_backtrack)
       },
@@ -208,12 +207,11 @@ impl WatchList {
             if !self.occurrences[lit.raw() as usize].contains_key(&cref) {
               let other = *literals
                 .iter()
-                .find(|lit| lit.assn(&assns) == Some(false))
-                .unwrap();
+                .find(|lit| lit.assn(&assns) == Some(false))?;
               assert!(self.add_clause_with_lits(cref.clone(), lit, other));
             }
             Some(lit)
-          }
+          },
         },
         Some(&o_lit) => {
           assert!(self.add_clause_with_lits(cref.clone(), lit, o_lit));

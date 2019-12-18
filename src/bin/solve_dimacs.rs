@@ -38,17 +38,20 @@ fn multi_threaded(s: &'_ str) {
   let initials = solvers[0].db.initial_clauses.clone();
 
   let (sender, receiver) = channel();
-  let children = core_ids.into_iter().map(move |id| {
-    let mut solver = solvers.pop().unwrap();
-    let sender = sender.clone();
-    thread::spawn(move || {
-      core_affinity::set_for_current(id);
-      // Safe to ignore error here because only care about first that finishes
-      let result = solver.solve();
-      solver.stats.rate(std::time::Duration::from_secs(1));
-      let _ = sender.send(result);
+  let children = core_ids
+    .into_iter()
+    .map(move |id| {
+      let mut solver = solvers.pop().expect("There were less solvers than cores?");
+      let sender = sender.clone();
+      thread::spawn(move || {
+        core_affinity::set_for_current(id);
+        // Safe to ignore error here because only care about first that finishes
+        let result = solver.solve();
+        solver.stats.rate(std::time::Duration::from_secs(1));
+        let _ = sender.send(result);
+      })
     })
-  }).collect::<Vec<_>>();
+    .collect::<Vec<_>>();
   for child in children {
     child.join().unwrap()
   }

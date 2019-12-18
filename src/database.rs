@@ -109,7 +109,7 @@ impl ClauseDatabase {
       Ok(mut learnt) => {
         let original = learnt.1.len();
         learnt.1.retain(|weak| weak.strong_count() > 0);
-        learnt.2 = learnt.1.len() - original;
+        learnt.2 = original - learnt.1.len();
       },
     };
   }

@@ -7,7 +7,7 @@ use crate::{
   var_state::VariableState,
   watch_list::WatchList,
 };
-use hashbrown::{HashMap};
+use hashbrown::HashMap;
 use std::{cell::RefCell, sync::Arc};
 
 pub const RESTART_BASE: u64 = 100;
@@ -137,9 +137,11 @@ impl Solver {
               &transfer,
             );
             if let Some(next_lit) = transfer_outcome {
+              if let Some(lvl) = self.levels[next_lit.var()] {
+                self.backtrack_to(lvl.saturating_sub(1));
+              }
               conflict = self.with(next_lit, Some(transfer));
               if conflict.is_some() {
-                self.backtrack_to(self.levels[next_lit.var()].unwrap());
                 break;
               }
             }
@@ -424,6 +426,6 @@ impl Solver {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum SeenState {
   Source,
-//  Redundant,
-//  Required,
+  //  Redundant,
+  //  Required,
 }
