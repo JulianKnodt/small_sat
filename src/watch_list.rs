@@ -176,8 +176,6 @@ impl WatchList {
     if self.already_exists(cref) {
       return None;
     }
-    self.activities.push(Arc::downgrade(&cref.activity));
-    // Only need to track at most 4 literals
     let mut watchable = literals
       .iter()
       .filter(|lit| lit.assn(&assns) != Some(false));
@@ -208,12 +206,14 @@ impl WatchList {
               let other = *literals
                 .iter()
                 .find(|lit| lit.assn(&assns) == Some(false))?;
+              self.activities.push(Arc::downgrade(&cref.activity));
               assert!(self.add_clause_with_lits(cref.clone(), lit, other));
             }
             Some(lit)
           },
         },
         Some(&o_lit) => {
+          self.activities.push(Arc::downgrade(&cref.activity));
           assert!(self.add_clause_with_lits(cref.clone(), lit, o_lit));
           None
         },
@@ -248,10 +248,11 @@ impl WatchList {
       .filter(|(_, watches)| !watches.is_empty())
       .for_each(|(lit, watches)| {
         if Literal::from(lit as u32).assn(assns) == Some(true) {
-          watches.retain(|cref, _| cref.initial);
+          watches.clear();
         } else {
-          watches.retain(|cref, other_lit| cref.initial || other_lit.assn(assns) != Some(true));
+          watches.retain(|_, other_lit| other_lit.assn(assns) != Some(true));
         }
+        watches.shrink_to_fit();
       });
   }
   /// returns the median activity for this watchlist
@@ -299,8 +300,10 @@ impl WatchList {
             || cref.locked(lit, assns, causes)
             || cref.locked(o_lit, assns, causes)
         });
+        watches.shrink_to_fit();
       });
     drop(curr);
     self.activities.retain(|act| act.strong_count() > 0);
+    self.activities.shrink_to_fit();
   }
 }

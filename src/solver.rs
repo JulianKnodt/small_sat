@@ -130,20 +130,9 @@ impl Solver {
             if let Some(sol) = self.db.get_solution() {
               return sol;
             }
-            let transfer_outcome = self.watch_list.add_transfer(
-              &self.assignments,
-              &self.causes,
-              &self.levels,
-              &transfer,
-            );
-            if let Some(next_lit) = transfer_outcome {
-              if let Some(lvl) = self.levels[next_lit.var()] {
-                self.backtrack_to(lvl.saturating_sub(1));
-              }
-              conflict = self.with(next_lit, Some(transfer));
-              if conflict.is_some() {
-                break;
-              }
+            conflict = self.add_transfer(transfer);
+            if conflict.is_some() {
+              break;
             }
           }
         }
@@ -167,6 +156,21 @@ impl Solver {
     self.db.add_solution(Some(solution.clone()));
     self.stats.rate(std::time::Duration::from_secs(1));
     Some(solution)
+  }
+
+  fn add_transfer(&mut self, transfer: ClauseRef) -> Option<ClauseRef> {
+    let transfer_conf =
+      self
+        .watch_list
+        .add_transfer(&self.assignments, &self.causes, &self.levels, &transfer);
+    if let Some(next_lit) = transfer_conf {
+      if let Some(lvl) = self.levels[next_lit.var()] {
+        self.backtrack_to(lvl.saturating_sub(1));
+        return self.add_transfer(transfer);
+      }
+      return self.with(next_lit, Some(transfer));
+    }
+    None
   }
 
   /// gets the final assignments for this solver
@@ -227,13 +231,11 @@ impl Solver {
       };
     let mut causes = learn_until_uip(src_clause, 0, curr_len, None);
     while causes.1 > 0 {
-      let conflict = causes.0.unwrap();
+      let conflict = causes.0.expect("No cause found in analyze?");
       causes = learn_until_uip(&conflict, causes.1, causes.2, Some(causes.3));
     }
     // minimization before adding asserting literal
-    /*
-    learnt.retain(|lit| self.causes[lit.var()].is_none() || !self.lit_redundant(*lit, &mut seen));
-    */
+    // learnt.retain(|lit| self.causes[lit.var()].is_none() || !self.lit_redundant(*lit, &mut seen));
 
     // add asserting literal
     learnt.push(!causes.3);
@@ -369,11 +371,12 @@ impl Solver {
     Some(replicas)
   }
 
-  /*
   // TODO make this closer to minisat because it's a big source of
   // inefficiency and also might be unsound
   /// checks whether a literal in a conflict clause is redundant
+  #[allow(dead_code)]
   fn lit_redundant(&self, lit: Literal, seen: &mut HashMap<usize, SeenState>) -> bool {
+    use hashbrown::HashSet;
     assert!(!seen.contains_key(&lit.var()) ^ (seen[&lit.var()] == SeenState::Source));
     let mut remaining = self.analyze_stack.borrow_mut();
     assert!(remaining.is_empty());
@@ -420,12 +423,11 @@ impl Solver {
     }
     true
   }
-  */
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum SeenState {
   Source,
-  //  Redundant,
-  //  Required,
+  Redundant,
+  Required,
 }

@@ -20,15 +20,13 @@ where
     let line = line.trim();
     if line.starts_with('c') {
       continue;
-    } // comments
+    }
     if line.starts_with("p cnf") {
-      let items = line
+      let mut items = line
         .split_whitespace()
-        .filter_map(|v| v.parse::<usize>().ok())
-        .collect::<Vec<_>>();
-      assert_eq!(items.len(), 2);
-      max_var = items[0];
-      clauses.reserve(items[1]);
+        .filter_map(|v| v.parse::<usize>().ok());
+      max_var = items.next().expect("Missing # variables from \"p cnf\"");
+      clauses.reserve(items.next().expect("Missing # clauses from \"p cnf\""));
     } else {
       line
         .split_whitespace()
@@ -38,7 +36,9 @@ where
         })
         .for_each(|v| match v {
           0 => {
-            let mut complete_clause = Clause::from(mem::replace(&mut curr_lits, vec![]));
+            curr_lits.shrink_to_fit();
+            let mut complete_clause =
+              Clause::from(mem::replace(&mut curr_lits, Vec::with_capacity(3)));
             complete_clause.initial = true;
             clauses.push(complete_clause);
           },
@@ -55,5 +55,6 @@ where
     "DIMAC's file max variable incorrect got {}, expected {}",
     max_seen_var, max_var
   );
+  clauses.shrink_to_fit();
   Ok((clauses, max_var))
 }
