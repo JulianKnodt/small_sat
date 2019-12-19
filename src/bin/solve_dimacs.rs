@@ -8,8 +8,8 @@ fn main() {
   let start = Instant::now();
   for arg in env::args().skip(1).filter(|v| !v.starts_with("--")) {
     println!("Starting {:?}", arg);
-    // multi_threaded(&arg);
-    single_threaded(&arg);
+    multi_threaded(&arg);
+    // single_threaded(&arg);
   }
   println!("Total elapsed for all: {:?}", start.elapsed());
 }

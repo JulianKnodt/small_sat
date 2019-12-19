@@ -185,8 +185,9 @@ impl WatchList {
         let to_backtrack = *literals
           .iter()
           .filter(|lit| causes[lit.var()].is_some())
-          .min_by_key(|lit| levels[lit.var()])
-          .unwrap_or_else(|| literals.iter().min_by_key(|lit| levels[lit.var()]).unwrap());
+          // max by seems to work better than min by but both work
+          .max_by_key(|lit| levels[lit.var()])
+          .unwrap_or_else(|| literals.iter().max_by_key(|lit| levels[lit.var()]).unwrap());
         let other_false = *literals
           .iter()
           .filter(|lit| levels[lit.var()].unwrap() < levels[to_backtrack.var()].unwrap())
