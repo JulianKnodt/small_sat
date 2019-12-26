@@ -154,7 +154,6 @@ impl Solver {
     }
     let solution = self.final_assignments();
     self.db.add_solution(Some(solution.clone()));
-    // self.stats.rate(std::time::Duration::from_secs(1));
     Some(solution)
   }
 
@@ -377,9 +376,11 @@ impl Solver {
     // assert!(!seen.contains_key(&lit.var()) ^ (seen[&lit.var()] == SeenState::Source));
     // let mut remaining = self.analyze_stack.borrow_mut();
     let cause = self.reason(lit.var()).unwrap();
-    let literals = cause.literals.iter().filter(|lit|
-      self.reason(lit.var())
-        .map_or(true, |reason| !Arc::ptr_eq(&reason.inner, &cause.inner)));
+    let literals = cause.literals.iter().filter(|lit| {
+      self
+        .reason(lit.var())
+        .map_or(true, |reason| !Arc::ptr_eq(&reason.inner, &cause.inner))
+    });
 
     for lit in literals {
       let redundant = self.levels[lit.var()] == Some(0)
@@ -390,7 +391,9 @@ impl Solver {
         continue;
       }
       let required = self.reason(lit.var()).is_none()
-        || seen.get(&lit.var()).map_or(false, |&ss| ss == SeenState::Required)
+        || seen
+          .get(&lit.var())
+          .map_or(false, |&ss| ss == SeenState::Required)
         || !self.lit_redundant(*lit, seen);
       if required {
         seen.entry(lit.var()).or_insert(SeenState::Required);

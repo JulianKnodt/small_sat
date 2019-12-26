@@ -71,9 +71,9 @@ impl Stats {
     );
     println!("Total time: {:?}", total_time);
   }
-  pub fn csv<S: AsRef<str>>(&self, name: S) {
+  pub fn csv<S: AsRef<str>>(&self, name: S, sat: bool) {
     println!(
-      "{}, {}, {}, {}, {}, {}, {}, {}",
+      "{}, {}, {}, {}, {}, {}, {}, {}, {}",
       name.as_ref(),
       self.restarts,
       self.clauses_learned,
@@ -81,7 +81,8 @@ impl Stats {
       self.written_clauses,
       self.transferred_clauses,
       self.learnt_literals,
-      self.start_time.elapsed().as_nanos()
+      self.start_time.elapsed().as_nanos(),
+      if sat { "SAT" } else { "UNSAT" }
     )
   }
 }
