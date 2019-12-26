@@ -71,4 +71,17 @@ impl Stats {
     );
     println!("Total time: {:?}", total_time);
   }
+  pub fn csv<S: AsRef<str>>(&self, name: S) {
+    println!(
+      "{}, {}, {}, {}, {}, {}, {}, {}",
+      name.as_ref(),
+      self.restarts,
+      self.clauses_learned,
+      self.propogations,
+      self.written_clauses,
+      self.transferred_clauses,
+      self.learnt_literals,
+      self.start_time.elapsed().as_nanos()
+    )
+  }
 }

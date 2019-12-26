@@ -154,7 +154,7 @@ impl Solver {
     }
     let solution = self.final_assignments();
     self.db.add_solution(Some(solution.clone()));
-    self.stats.rate(std::time::Duration::from_secs(1));
+    // self.stats.rate(std::time::Duration::from_secs(1));
     Some(solution)
   }
 
@@ -235,7 +235,7 @@ impl Solver {
       causes = learn_until_uip(&conflict, causes.1, causes.2, Some(causes.3));
     }
     // minimization before adding asserting literal
-    // learnt.retain(|lit| self.causes[lit.var()].is_none() || !self.lit_redundant(*lit, &mut seen));
+    learnt.retain(|lit| self.reason(lit.var()).is_none() || !self.lit_redundant(*lit, &mut seen));
 
     // add asserting literal
     learnt.push(!causes.3);
@@ -371,56 +371,33 @@ impl Solver {
     Some(replicas)
   }
 
-  // TODO make this closer to minisat because it's a big source of
-  // inefficiency and also might be unsound
   /// checks whether a literal in a conflict clause is redundant
   #[allow(dead_code)]
   fn lit_redundant(&self, lit: Literal, seen: &mut HashMap<usize, SeenState>) -> bool {
-    use hashbrown::HashSet;
-    assert!(!seen.contains_key(&lit.var()) ^ (seen[&lit.var()] == SeenState::Source));
-    let mut remaining = self.analyze_stack.borrow_mut();
-    assert!(remaining.is_empty());
-    let mut prev = HashSet::new();
-    remaining.push(lit);
-    while let Some(curr) = remaining.pop() {
-      let clause = self.reason(curr.var()).unwrap();
-      let lits = clause
-        .literals
-        .iter()
-        // ignore asserting literals
-        .filter(|lit| {
-          self
-            .reason(lit.var())
-            .map_or(true, |reason| !Arc::ptr_eq(&reason.inner, &clause.inner))
+    // assert!(!seen.contains_key(&lit.var()) ^ (seen[&lit.var()] == SeenState::Source));
+    // let mut remaining = self.analyze_stack.borrow_mut();
+    let cause = self.reason(lit.var()).unwrap();
+    let literals = cause.literals.iter().filter(|lit|
+      self.reason(lit.var())
+        .map_or(true, |reason| !Arc::ptr_eq(&reason.inner, &cause.inner)));
+
+    for lit in literals {
+      let redundant = self.levels[lit.var()] == Some(0)
+        || seen.get(&lit.var()).map_or(false, |&ss| {
+          ss == SeenState::Source || ss == SeenState::Redundant
         });
-      for lit in lits {
-        let prev_removable = self.levels[lit.var()] == Some(0)
-          || prev.contains(&lit.var())
-          || seen.get(&lit.var()).map_or(false, |&ss| {
-            ss == SeenState::Source || ss == SeenState::Redundant
-          });
-        if prev_removable {
-          continue;
-        }
-        if self.reason(lit.var()) == None
-          || seen
-            .get(&lit.var())
-            .map_or(false, |&ss| ss == SeenState::Required)
-        {
-          remaining
-            .drain(..)
-            .chain(std::iter::once(*lit))
-            .chain(std::iter::once(curr))
-            .for_each(|lit| {
-              seen.entry(lit.var()).or_insert(SeenState::Required);
-            });
-          return false;
-        }
-        remaining.push(*lit);
-        prev.insert(lit.var());
+      if redundant {
+        continue;
       }
-      seen.entry(lit.var()).or_insert(SeenState::Redundant);
+      let required = self.reason(lit.var()).is_none()
+        || seen.get(&lit.var()).map_or(false, |&ss| ss == SeenState::Required)
+        || !self.lit_redundant(*lit, seen);
+      if required {
+        seen.entry(lit.var()).or_insert(SeenState::Required);
+        return false;
+      }
     }
+    seen.entry(lit.var()).or_insert(SeenState::Redundant);
     true
   }
 }
