@@ -5,20 +5,20 @@ use std::{env, thread};
 
 fn main() {
   // specify how many cores to run this on
-  let start = std::time::Instant::now();
+  // let start = std::time::Instant::now();
   for arg in env::args().skip(1).filter(|v| !v.starts_with("--")) {
     // println!("Starting {:?}", arg);
-    multi_threaded(&arg);
+    multi_threaded(&arg, 4);
     // single_threaded(&arg);
   }
-  println!("Total elapsed for all: {:?}", start.elapsed());
+  // println!("Total elapsed for all: {:?}", start.elapsed());
 }
 
 #[allow(dead_code)]
 fn single_threaded(s: &'_ str) {
   let mut solver = Solver::from_dimacs(s).expect("Could not open dimacs file");
   let result = solver.solve();
-  solver.stats.csv(s, result.is_some());
+  solver.stats.csv(s, 1, result.is_some());
   match result {
     None => (), // println!("{} UNSAT", s),
     Some(sol) => {
@@ -29,7 +29,7 @@ fn single_threaded(s: &'_ str) {
 }
 
 #[allow(dead_code)]
-fn multi_threaded(s: &'_ str) {
+fn multi_threaded(s: &'_ str, num_cores: usize) {
   use std::sync::mpsc::channel;
   let core_ids = core_affinity::get_core_ids().expect("Could not get core ids");
   let mut solvers = Solver::from_dimacs(s)
@@ -41,6 +41,7 @@ fn multi_threaded(s: &'_ str) {
   let name = s.to_owned();
   let children = core_ids
     .into_iter()
+    .take(num_cores)
     .map(move |id| {
       let mut solver = solvers.pop().expect("There were less solvers than cores?");
       let sender = sender.clone();
@@ -49,7 +50,7 @@ fn multi_threaded(s: &'_ str) {
         core_affinity::set_for_current(id);
         // Safe to ignore error here because only care about first that finishes
         let result = solver.solve();
-        solver.stats.csv(name, result.is_some());
+        solver.stats.csv(name, num_cores, result.is_some());
         let _ = sender.send(result);
       })
     })
