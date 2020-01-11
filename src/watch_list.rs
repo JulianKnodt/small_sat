@@ -11,9 +11,10 @@ use std::sync::{
 /// An implementation of occurrence lists based on MiniSat's OccList
 #[derive(Clone, Debug)]
 pub struct WatchList {
-  clauses: Vec<(ClauseRef, f32)>,
-  // raw literal ->  Vec(Idx of Clause being watched, other literal being watched in clause)
-  occurrences: Vec<HashMap<usize, Literal>>,
+  // raw literal ->  Vec(Clause being watched, other literal being watched in clause)
+  occurrences: Vec<HashMap<ClauseRef, Literal>>,
+  // activities for the clauses in this watchlist
+  activities: Vec<Weak<AtomicU64>>,
 }
 
 /// leaves enough space for both true and false variables up to max_var.
@@ -25,8 +26,8 @@ impl WatchList {
   /// from the initial constraints
   pub fn new(db: &ClauseDatabase) -> (Self, Vec<(ClauseRef, Literal)>) {
     let mut wl = Self {
-      clause: vec![],
       occurrences: vec![HashMap::new(); space_for_all_lits(db.max_var)],
+      activities: vec![],
     };
     let units = db
       .iter()

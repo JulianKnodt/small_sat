@@ -10,7 +10,3 @@ mod var_state;
 mod watch_list;
 
 pub mod solver;
-
-
-mod clause2;
-mod database2;
