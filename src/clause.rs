@@ -15,8 +15,6 @@ pub struct Clause {
   pub(crate) literals: Vec<Literal>,
   /// True iff this clause was from the initial set of clauses
   pub(crate) initial: bool,
-  /// Clause activity, used for compaction
-  pub(crate) activity: Arc<AtomicU64>,
 }
 
 impl PartialEq for Clause {
@@ -39,6 +37,12 @@ impl Hash for Clause {
 impl Clause {
   /// returns true if this clause has no literals.
   pub fn is_empty(&self) -> bool { self.literals.is_empty() }
+  pub fn with_capacity(cap: usize) -> Self {
+    Self {
+      literals: Vec::with_capacity(cap),
+      initial: false,
+    }
+  }
   /// Returns true if this clause contains both a literal and its negation.
   pub fn is_tautology(&self) -> bool {
     let mut seen: Vec<&Literal> = Vec::with_capacity(self.literals.len());
@@ -57,10 +61,6 @@ impl Clause {
       .iter()
       .any(|lit| final_assns[lit.var()] ^ lit.negated())
   }
-  /// Increases the ordering of this clause
-  pub fn boost(&self) { self.activity.fetch_add(1, Ordering::SeqCst); }
-  /// SeqCst Atomic load of the activity for this clause
-  pub fn curr_activity(&self) -> u64 { self.activity.load(Ordering::SeqCst) }
 }
 
 impl From<Vec<Literal>> for Clause {

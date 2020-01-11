@@ -1,15 +1,15 @@
 extern crate core_affinity;
 
 use small_sat::solver::Solver;
-use std::{env, thread};
+use std::{env, thread, time::Duration};
 
 fn main() {
   // specify how many cores to run this on
   // let start = std::time::Instant::now();
   for arg in env::args().skip(1).filter(|v| !v.starts_with("--")) {
     // println!("Starting {:?}", arg);
-    multi_threaded(&arg, 4);
-    // single_threaded(&arg);
+    // multi_threaded(&arg, 4);
+    single_threaded(&arg);
   }
   // println!("Total elapsed for all: {:?}", start.elapsed());
 }
@@ -19,6 +19,7 @@ fn single_threaded(s: &'_ str) {
   let mut solver = Solver::from_dimacs(s).expect("Could not open dimacs file");
   let result = solver.solve();
   solver.stats.csv(s, 1, result.is_some());
+  solver.stats.rate(Duration::from_secs(1));
   match result {
     None => (), // println!("{} UNSAT", s),
     Some(sol) => {

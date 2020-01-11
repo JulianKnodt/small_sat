@@ -106,6 +106,8 @@ impl Solver {
         let lit = self.watch_list.add_learnt(&self.assignments, &cref);
 
         self.var_state.decay();
+        // self.watch_list.clause_decay();
+
         // assign resulting literal with the learnt clause as the cause
         conflict = self.with(lit, Some(cref));
         assert_eq!(self.assignments[lit.var()], Some(lit.val()));
@@ -145,7 +147,6 @@ impl Solver {
       if self.level == 0 {
         self.watch_list.remove_satisfied(&self.assignments);
       }
-      // compacting (currently leads to slow down so probably don't want to compact)
       self.db.compact(self.id);
       if self.stats.clauses_learned + self.stats.transferred_clauses > (max_learnts as usize) {
         self.watch_list.clean(&self.assignments, &self.causes);
@@ -184,6 +185,7 @@ impl Solver {
   pub fn reason(&self, var: usize) -> Option<&ClauseRef> { self.causes[var].as_ref() }
   /// Analyzes a conflict for a given variable
   fn analyze(&mut self, src_clause: &ClauseRef, decision_level: usize) -> (Clause, usize) {
+    use hashbrown::hash_map::Entry;
     let mut learnt: Vec<Literal> = vec![];
     // TODO convert seen, removable, to reused vectors?
     // let mut seen: HashSet<usize> = HashSet::new();
@@ -200,20 +202,21 @@ impl Solver {
           .literals
           .iter()
           // only find new literals
-          .filter(|&lit| previous_lit != Some(*lit))
+          .filter(|&&lit| previous_lit.map_or(true, |prev| prev != lit))
           .filter(|&lit| match &levels[lit.var()] {
-            Some(0) => false,
-            Some(lvl) if !seen.contains_key(&lit.var()) => {
-              seen.insert(lit.var(), SeenState::Source);
-              var_state.increase_var_activity(lit.var());
-              if *lvl >= decision_level {
-                true
-              } else {
-                learnt.push(*lit);
-                false
-              }
+            None | Some(0) => false,
+            Some(lvl) => match seen.entry(lit.var()) {
+              Entry::Occupied(_) => false,
+              Entry::Vacant(ent) => {
+                ent.insert(SeenState::Source);
+                var_state.increase_var_activity(lit.var());
+                let trail = *lvl >= decision_level;
+                if !trail {
+                  learnt.push(*lit)
+                }
+                trail
+              },
             },
-            _ => false,
           })
           .count();
         let mut idx = trail_idx;
@@ -243,17 +246,24 @@ impl Solver {
       // backtrack to 0
       return (Clause::from(learnt), 0);
     }
-    let mut levels = learnt.iter().filter_map(|lit| self.levels[lit.var()]);
+    let mut levels = learnt
+      .iter()
+      .map(|lit| self.levels[lit.var()].expect("Internal error, no level for learnt"));
     let curr_max = levels.next().unwrap();
-    let (max, second) = levels.fold((curr_max, None), |(max, second), next| {
-      use std::cmp::Ordering;
-      match next.cmp(&max) {
-        Ordering::Greater => (next, Some(max)),
-        Ordering::Equal => (max, second),
-        Ordering::Less => (max, second.filter(|&v| v >= next).or(Some(next))),
-      }
+    let mut others = levels.filter(|&lvl| lvl != curr_max);
+    let (max, second) = match others.next() {
+      None => return (Clause::from(learnt), curr_max),
+      Some(lvl) if lvl > curr_max => (lvl, curr_max),
+      Some(lvl) => (curr_max, lvl),
+    };
+    assert_ne!(max, second);
+    use std::cmp::Ordering;
+    let (_, second) = others.fold((max, second), |(max, second), next| match next.cmp(&max) {
+      Ordering::Greater => (next, max),
+      Ordering::Equal => (max, second),
+      Ordering::Less => (max, second.max(next)),
     });
-    (Clause::from(learnt), second.unwrap_or(max))
+    (Clause::from(learnt), second)
   }
   pub fn next_level(&mut self) -> usize {
     self.level_indeces.push(self.assignment_trail.len());
@@ -267,7 +277,7 @@ impl Solver {
     }
     self.level = lvl;
     let index = self.level_indeces[lvl];
-    drop(self.level_indeces.drain(lvl..));
+    self.level_indeces.truncate(lvl);
     for lit in self.assignment_trail.drain(index..) {
       let var = lit.var();
       assert_ne!(self.assignments[var].take(), None);
@@ -373,8 +383,6 @@ impl Solver {
   /// checks whether a literal in a conflict clause is redundant
   #[allow(dead_code)]
   fn lit_redundant(&self, lit: Literal, seen: &mut HashMap<usize, SeenState>) -> bool {
-    // assert!(!seen.contains_key(&lit.var()) ^ (seen[&lit.var()] == SeenState::Source));
-    // let mut remaining = self.analyze_stack.borrow_mut();
     let cause = self.reason(lit.var()).unwrap();
     let literals = cause.literals.iter().filter(|lit| {
       self
