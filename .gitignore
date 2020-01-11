@@ -9,3 +9,5 @@ makefile
 .DS_Store
 *.profile
 *.svg
+outputs
+*.pdf

@@ -1,0 +1,108 @@
+\documentclass[11pt]{extarticle}
+\usepackage[utf8]{inputenc}
+\usepackage{hyperref}
+\usepackage{cite}
+
+%-------------------- Formatting
+
+\setlength{\parindent}{1cm}
+\setlength{\parskip}{6pt}
+
+%-------------------- Title
+
+\title{Concurrent SAT Solving with Identical Replicas}
+\author{Julian Knodt, Sharad Malik}
+\date{}
+\begin{document}
+\maketitle
+
+%-------------------- Text
+
+\section*{Introduction}
+Existing SAT solvers mainly rely on single-threaded implementations, with most widely used SAT
+solvers such as MiniSAT being single-threaded and not providing an alternate concurrent mode for
+utilizing more resources for faster solving. There have been prior attempts to parallelize SAT
+solvers, such as by partitioning the search space so that solvers can work on different
+components without interfering with each other, or by creating a portfolio of solvers which have
+been tuned to solve different problems more optimally. These approaches will sometimes share
+information across solver instance, but since they often do not overlap in the search space,
+they may not benefit from that sharing. If by keeping solvers searching similar portions we can
+make sharing more efficient, we would like to see if maintaining multiple solvers with identical
+hyper-parameters would lead still lead to a speed increase.
+\section*{Overview}
+While initially it seemed viable to build on top of minisat and demonstrate an increase in
+speed, it was chosen instead to develop a new solver that would more adequately allow for the
+inclusion of shared memory amongst solvers as MiniSAT relies heavily on being single-threaded in
+order to allocate memory for clauses. Thus, it was decided to develop a new solver that might
+better handle the concurrency constraints of the desired system. In addition, Rust was chosen as
+the language of development due to how it handles safety with concurrent threads as well as its
+efficiency.
+
+% TODO add a diagram and possibly some other metrics?
+
+\section*{Project Tasks}
+\begin{enumerate}
+\item
+In order to develop a multi-threaded SAT solver, it was necessary to create a single-threaded
+SAT solver. Since MiniSAT is prominent and efficient, the overall algorithm, such as using
+VSIDS, watch-lists, as well tracking various other metrics closely followed MiniSAT's
+implementation. MiniSAT also has a custom arena based allocation for clauses, but this was not
+implemented because it was unclear how this could be easily translated to a thread-safe
+implementation. In addition, MiniSAT hand-rolled many different data-structures such as vectors,
+maps, etc, but standard library versions were used in the new implementation, speeding up
+development but possibly slowing down the final implementation. Of note, the standard library
+version of HashMaps do not guarantee iteration order, so while the MiniSAT version is
+deterministic in what order it traverses clauses, this implementation is not.
+
+Building and development were all done through standard rust tooling(Cargo, rustc) and the
+source code is available at \url{https://github.com/JulianKnodt/small_sat}.
+
+This SAT solver, and also the final iteration of it, were limited in scope that they
+could not be constructed at runtime, but instead just read in data from a CNF file\cite{cnf}.
+This limitation did not matter, as it was the case that suitable CNF benchmarks exist and could
+be used instead of hand-rolling benchmarks.
+
+This implementation also changed the mutability of clauses, making it so that by defaults
+clauses are sorted by the order of the literals, and that they are immutable. This was done to
+make clauses more easily shared across threads, as in MiniSAT solvers would track which literal
+was being watched by moving them to the front of the clause, but with multiple solvers tracking
+literals, more than two literals might be tracked at the same time, so it would be impossible to
+use that scheme in order to know which literals to look at. Thus, we explicitly track the other
+literal in the clause being watched inside of the watch list itself.
+
+\item
+After implementing the initial version of the solver, it was necessary to add parallelization to
+the solver. This was done by modifying the clause database to track clauses for $n$ different
+solvers independently of each other, and also keeping a clock of the latest clause seen by each
+solver. The clock was added in order to allow for garbage collection of clauses seen by all
+solvers and also ensuring solvers were not being sent the same clause multiple times. It was
+also necessary to use atomically reference counted pointers in order to share clauses across
+threads, since we decided to use a shared memory model instead of allowing each thread to
+allocate its own set of clauses. This, in hindsight, may have been a mistake as it became much
+harder to handle garbage collection and ensuring only important clauses were kept in the solver,
+as well as tracking clause activity.
+
+Solvers could also share a solution with other solvers once it had found it, allowing for all
+solvers to terminate once any one of them had either found a solution or found it unsatisfiable.
+
+In addition, it was also thought that pinning each solver to a core might increase its
+efficiency, as it would be able to best utilize its caches and the system as a whole.
+Fortunately, there was an existing package \texttt{core_affinity} which allowed for this. This
+suggests to the system which core each thread should run on, and thus we run at most as many
+threads as there are cores in order to hopefully gain the most benefit. On top of core affinity,
+core exclusivity, where a thread is the only thing running on a core, was considered, but I am
+unfamiliar with any tools that allow for this to occur.
+\item
+In order to test my implementation, multiple small cnf
+
+\end{enumerate}
+\section*{Results}
+\section*{Discussion}
+\section*{Conclusions}
+
+
+\bibliographystyle{unsrt}
+\nocite{*}
+\bibliography{refs.bib}
+
+\end{document}
