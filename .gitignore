@@ -4,10 +4,14 @@ Cargo.lock
 __pycache__/
 *.swp
 *.dot
-*.png
 makefile
 .DS_Store
 *.profile
 *.svg
 outputs
 *.pdf
+*.bbl
+*.aux
+*.log
+*.out
+*.blg
