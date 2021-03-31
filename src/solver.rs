@@ -248,7 +248,7 @@ impl Solver {
     }
     let mut levels = learnt
       .iter()
-      .map(|lit| self.levels[lit.var()].expect("Internal error, no level for learnt"));
+      .map(|lit| self.levels[lit.var()].unwrap());
     let curr_max = levels.next().unwrap();
     let mut others = levels.filter(|&lvl| lvl != curr_max);
     let (max, second) = match others.next() {

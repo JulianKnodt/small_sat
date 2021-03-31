@@ -59,20 +59,22 @@ utilizing more resources for faster solving. There have been prior attempts to p
 solvers, such as by partitioning the search space so that solvers can work on different
 components without interfering with each other, or by creating a portfolio of solvers which have
 been tuned to solve different problems more optimally. These approaches will sometimes share
-information across solver instance, but since they often do not overlap in the search space,
-they may not benefit from that sharing. If by keeping solvers searching similar portions we can
-make sharing more efficient, we would like to see if maintaining multiple solvers with identical
-hyper-parameters would lead still lead to a speed increase.
+information across solver instances, but since they often do not overlap in the search space,
+they may not benefit from that sharing. We seek to make sharing more efficient by keeping
+separate solver instances searching the same part of the search space. This can be done by
+maintaining multiple solvers with the same hyper-parameters and analyzing the runtime of the
+system.
 \section*{Overview}
-While initially it seemed viable to build on top of minisat and demonstrate an increase in
-speed, it was chosen instead to develop a new solver that would more adequately allow for the
+While initially it seemed viable to build on top of MiniSAT a concurrent system, it was chosen
+instead to develop a new solver that would more adequately allow for the
 inclusion of shared memory amongst solvers as MiniSAT relies heavily on being single-threaded in
-order to allocate memory for clauses. Thus, it was decided to develop a new solver that might
-better handle the concurrency constraints of the desired system. In addition, Rust was chosen as
+order to allocate memory for clauses. This new solver would be based heavily on MiniSAT but
+would be designed from the ground up to better handle the concurrency constraints of the
+desired system. To this end, Rust was chosen as
 the language of development due to how it handles safety with concurrent threads as well as its
-efficiency. The solver to be developed was based heavily on MiniSAT\cite{minisat} with inspiration
-from CryptoMiniSAT\cite{cryptoms} which has documented various aspects of implementing a SAT
-Solver. In addition, various notes from Glucose\cite{glucose} and its parallel implementation were used.
+efficiency. Other inspiration for the development of the solver was drawn from CryptoMiniSAT
+\cite{cryptoms} which has documented various aspects of implementing a SAT
+Solver and various notes from Glucose\cite{glucose} and its parallel implementation were used.
 
 The general steps of the algorithm are as follows:
 \begin{lstlisting}[caption = Implementation Pseudocode]
@@ -133,16 +135,17 @@ fn main(dimacs_filename, num_threads = 4) -> Nothing {
 \section*{Project Tasks}
 \begin{enumerate}
 \item
-In order to develop a multi-threaded SAT solver, it was necessary to create a single-threaded
-SAT solver. Since MiniSAT is prominent and efficient, the overall algorithm, such as using
-VSIDS, watch-lists, as well tracking various other metrics closely followed MiniSAT's
-implementation. MiniSAT also has a custom arena based allocation for clauses, but this was not
+In order to develop a multi-threaded SAT solver, it was first necessary to create a correct
+implementation of a single-threaded SAT solver. Since MiniSAT is prominent and efficient, the
+overall algorithm, such as using VSIDS, watch-lists, as well tracking various other metrics
+closely followed MiniSAT's implementation closely. MiniSAT also has a custom arena based
+allocation for clauses, but this was not
 implemented because it was unclear how this could be easily translated to a thread-safe
 implementation. In addition, MiniSAT hand-rolled many different data-structures such as vectors,
 maps, etc, but standard library versions were used in the new implementation, speeding up
 development but possibly slowing down the final implementation. Of note, the standard library
 version of HashMaps do not guarantee iteration order, so while the MiniSAT version is
-deterministic in what order it traverses clauses, this implementation is not.
+deterministic in what order it traverses clauses, the implementation is not.
 
 Building and development were all done through standard rust tooling(Cargo, rustc) and the
 source code is available at \url{https://github.com/JulianKnodt/small_sat}.
@@ -153,7 +156,8 @@ This limitation did not matter, as it was the case that suitable CNF benchmarks 
 be used instead of hand-rolling benchmarks.
 
 This implementation also changed the mutability of clauses, making it so that by defaults
-clauses are sorted by the order of the literals, and that they are immutable. This was done to
+clauses are sorted by the order of the underlying integers in the literals, and that this order
+is not changed through the runtime.
 make clauses more easily shared across threads, as in MiniSAT solvers would track which literal
 was being watched by moving them to the front of the clause, but with multiple solvers tracking
 literals, more than two literals might be tracked at the same time, so it would be impossible to
@@ -161,37 +165,39 @@ use that scheme in order to know which literals to look at. Thus, we explicitly 
 literal in the clause being watched inside of the watch list itself.
 
 \item
-After implementing the initial version of the solver, it was necessary to add parallelization to
-the solver. This was done by modifying the clause database to track clauses for $n$ different
-solvers independently of each other, and also keeping a clock of the latest clause seen by each
+After implementing the initial version of the solver, the next component was adding
+parallelization to the solver. This was done by modifying the clause database to track clauses
+for $n$ different solvers independently of each other, and also keeping a clock of the latest
+clause seen by each
 solver. The clock was added in order to allow for garbage collection of clauses seen by all
 solvers and also ensuring solvers were not being sent the same clause multiple times. It was
 also necessary to use atomically reference counted pointers in order to share clauses across
 threads, since we decided to use a shared memory model instead of allowing each thread to
 allocate its own set of clauses. This, in hindsight, may have been a mistake as it became much
-harder to handle garbage collection and ensuring only important clauses were kept in the solver,
-as well as tracking clause activity.
+harder to handle garbage collection, ensure only important clauses were kept in the solver,
+and track clause activity.
 
 Solvers could also share a solution with other solvers once it had found it, allowing for all
 solvers to terminate once any one of them had either found a solution or found it unsatisfiable.
 
-In addition, it was also thought that pinning each solver to a core might increase its
-efficiency, as it would be able to best utilize its caches and the system as a whole.
+Another component added for effiency was pinning each solver to a core, as it would be able to
+best utilize its caches and other components of the memory hierarchy.
 Fortunately, there was an existing package \texttt{core\_affinity} which allowed for this. This
 suggests to the system which core each thread should run on, and thus we run at most as many
 threads as there are cores in order to hopefully gain the most benefit. On top of core affinity,
-core exclusivity, where a thread is the only thing running on a core, was considered, but I am
-unfamiliar with any tools that allow for this to occur.
+core exclusivity, where a thread is the only thing running on a core, including kernel threads,
+was considered, but I am unfamiliar with any tools that allow for this to occur.
 
 \item
-In order to test my implementation, we created multiple small sample CNF files in order to test
-that our output would properly return SAT or UNSAT as well as handle edge cases such as
-duplicate initial clauses and empty initial clauses properly. Then, various different
-benchmarks were pulled from \url{https://www.cs.ubc.ca/~hoos/SATLIB/benchm.html}, and ran the
-solver on them in order to test runtime performance. Specifically, iterating on the "Flat"
-graph colouring instances and uniform random 3-SAT for a good portion of the single threaded
-solver, and moving on to the SAT-encoded bounded model checking instances for longer runtimes
-which more thoroughly test the solver. These timing tests were compared against the same solver
+In order to test my implementation, we created multiple small sample CNF files to demonstrate
+that our output would properly return SAT or UNSAT and handle edge cases such as
+duplicate initial clauses and empty clauses properly. Then, various different
+benchmarks were pulled from \url{https://www.cs.ubc.ca/~hoos/SATLIB/benchm.html}, and the
+solver was run on them to test runtime performance. Specifically, iterating on the "Flat"
+graph colouring instances and uniform random 3-SAT while implementing the single-threaded solver
+without many optimizations and moving on to the SAT-encoded bounded model checking instances
+for longer runtimes which more thoroughly tested the optimized, parallel solver.
+These timing tests were compared against the same solver
 with a lower number of cores in order to analyze the results. These timing tests were run on an
 a 4-core linux cluster which appeared to be mainly unused during the times tests were run.
 \end{enumerate}
@@ -205,7 +211,7 @@ returned, Basic is when literals are checked only one level deep if they are req
 which is done by checking if they are assigned at level 0, or they were between the UIP and the
 conflict. Deep does this recursively, checking causes of each literal, and ensuring that all of
 the parents are safe in order to more aggressively remove literals. Deep conflict clause
-minimization in minisat is implemented as a stack based algorithm, performing depth first
+minimization in MiniSAT is implemented as a stack based algorithm, performing depth first
 search, checking parents before completing any one clause. I had initially implemented it as
 breadth first, checking the entire clause, then checking parents. While this may seem like an
 easily noticable bug, it was not evident for a good amount of time primarily because many
@@ -213,7 +219,8 @@ instances still appeared to be correctly solved, and it only sporadically return
 answer. This made it appear as though for the most part minimization seemed to have work, and
 the sporadic bug could've arisen from anywhere in the code. In addition, it dramatically
 increased the speed of the solver in most cases, but also slowed things down without bounds in
-other cases. This could possibly be due to creation of cycles, but it's unclear where they
+others. This could possibly be due to creation of dependency cycles between literals, but it's
+unclear where they
 could've been introduced. These speedups do give hope that there could be further advancement on
 conflict clause minimization while still retaining correctness. Rather than explore fast
 minimization though, I ended up reimplementing it as a recursive function for simplicity
@@ -228,18 +235,20 @@ Intermediate buffers between function calls allows for
 easily returning data from any call and not immediately processing it, as it might be unclear
 where it should be processed and how it should be processed. When it is more clear how the
 results should be processed, these intermediate data structures are less efficient as they
-require memory to be allocated. Thus, removing them lead to a decent speed increase.
+require memory to be allocated. Thus, removing them after the first iteration lead to a decent
+speed increase.
 
 The other key optimization was changing the hashing algorithm and hashmap type, as at the time
 the builtin hashmap used a SipHash, designed to be strong against directed attempts at key
 collision and fast for medium sized keys. Neither of these properties were desirable, as in this
 implementation integer keys were used, and the hashmaps were all internal to the system.
-Changing these properties significantly sped up the watch-list, and likely suggest I should
-adopt MiniSAT's \texttt{IntMap} data structure as opposed to the builtin \texttt{HashMaps}.
+Changing these properties significantly sped up the watch-list, and these speedups suggest I
+should adopt MiniSAT's \texttt{IntMap} data structure as opposed to the builtin \texttt{HashMaps}.
 \item
 Another difficult to handle case was the representation of the \texttt{Clause} in memory. In
 MiniSAT, it is represented as a header with information about the clause and a pointer into a
-contiguous array of literals. I originally went with the simplification that clauses own the
+contiguous array of literals. I originally went with the simplification that clauses
+own\footnote{The memory for the literals is allocated and deallocated with the clause itself} the
 literals which they contain as this would more easily allow clauses to be shared across
 different threads. Since shared memory was used, such a scheme seemed necessary, but it is
 likely possible to structure the system to both efficiently use arena allocation of literals
@@ -295,7 +304,8 @@ are. This intuitively makes sense, as if one core gets stuck searching a part of
 space with no solution, if there are other solvers exploring more useful parts it is more likely
 that it will find an answer quickly. In the cases where variance did not stay the same, we
 suspect it to be the fault of the implementation, as it might be the case that allocations could
-cause random pauses which cannot be accounted for.
+cause random pauses which cannot be accounted for. We don't expect the variance to be due to the
+number of points collected, as 100 data sample should be sufficient to explain most variance.
 
 There are also multiple cases where it appears that adding more cores is slower than using a
 single core. These cases are where the time in order to create multiple solvers significantly
@@ -315,18 +325,18 @@ implement and bug free. Core affinity was also easily added into the project. Th
 to the strong type system provided by the tooling used, and also the ease of use of the package
 manager which allowed for quick integration of existing work. Unlike MiniSAT, the compilation
 process was also extremely simple, as the language and compiler properly handle compiling for
-different architectures and libraries don't need to be manually linked. Thus, what might've been
-a large hiccup in previous tooling was very smooth given the state of new tools. This allowed a
+different architectures and libraries didn't need to be manually linked. Thus, what might've been
+a large hiccup in previous tooling became smooth given the state of new tools. This allowed a
 fairly efficient implementation of clause sharing which demonstrated the effectiveness of it.
 
 On the other hand, the new system still does not have the ability to easily implement everything
 that can be implemented in C++. For example, controlling arena allocation is not as easy, and
-there are no pre-existing implementations which are well explained. In addition, while it is
-much safer to implement concurrent programs, it also becomes much harder to correctly and
+there are no pre-existing implementations which could be integrated simply. In addition, while
+it is much safer to implement concurrent programs, it also becomes much harder to correctly and
 efficiently implement. This difficulty also comes from the type system, which enforces many
-invariants which are hard to reason about. This ends up being a win for correct implementations
-of algorithms, but forces more time spent on API design and ensuring these invariants are
-satisfied.
+invariants which are not easy to reason about. This ends up being a win for correct
+implementations of algorithms, but forces more time spent on API design and ensuring these
+invariants are satisfied.
 \section*{Conclusions}
 % Future directions & summary
 We were able to implement a SAT solver which correctly solves instances at a respectable rate.
@@ -432,7 +442,9 @@ Interestingly, as the number of threads increases, the amount of conflicts that 
 goes down. That is, each solver is importing useful clauses which would otherwise need to have
 been computed in the future. Thus, per each thread, the number of clauses learned is
 significantly lower in almost all cases the more threads there are, which is a strong indication
-that work is being split well amongst different solvers.
+that work is being split well amongst different solvers. These graphs seem to also indicate that
+more work is being done as the number of cores increases, meaning it might be possible to get
+even more relevant clauses from other solvers.
 
 \bibliographystyle{unsrt}
 \nocite{*}
